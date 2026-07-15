@@ -37,7 +37,10 @@ case class ComplexHW[T](hw: HW[T]) extends HW[Complex[T]](hw.size * 2) (using Co
 
   override def minus(lhs: Sig[Complex[T]], rhs: Sig[Complex[T]]): Sig[Complex[T]] = Cpx(Re(lhs) - Re(rhs), Im(lhs) - Im(rhs))
 
-  override def times(lhs: Sig[Complex[T]], rhs: Sig[Complex[T]]): Sig[Complex[T]] = Cpx(Re(lhs) * Re(rhs) - Im(lhs) * Im(rhs), Re(lhs) * Im(rhs) + Im(lhs) * Re(rhs))
+  override def times(lhs: Sig[Complex[T]], rhs: Sig[Complex[T]]): Sig[Complex[T]] =
+    val z = (Re(lhs) - Im(lhs)) * Re(rhs)
+    Cpx(Im(lhs) * (Re(rhs) - Im(rhs)) + z,
+        Re(lhs) * (Re(rhs) + Im(rhs)) - z)
 
   override def bitsOf(const: Complex[T]): BigInt = (hw.bitsOf(const.im) << hw.size) + hw.bitsOf(const.re)
 
