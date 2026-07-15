@@ -104,7 +104,55 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
             )
         case _ =>
           val shift = this.rhs.hw.asInstanceOf[FixedPoint].fractional
-          ir.rtl.Tap(ir.rtl.Times(cp(this.lhs), cp(this.rhs)), shift until (shift + this.lhs.hw.size))
+          val left = cp(this.lhs)
+          val right = cp(this.rhs)
+          if left.size > 27 && left.size <= 35 && right.size <= 27 then
+            // DSP48E2 has a signed 27x18 multiplier. Split the wider left
+            // operand into an 18-bit signed low chunk and a signed high
+            // chunk. Treating the low chunk as signed subtracts 2^18 when
+            // its sign bit is set, so add that bit to the high chunk. This
+            // reconstructs the exact full product with two multipliers for
+            // FPT's 30x26 products instead of a generic four-way split.
+            val lowWidth = 18
+            val low = ir.rtl.Tap(left, 0 until lowWidth)
+            val high = ir.rtl.Tap(left, lowWidth until left.size)
+            val highSign = ir.rtl.Tap(high, (high.size - 1) until high.size)
+            val extendedHigh = ir.rtl.Concat(Seq(highSign, high))
+            val lowSign = ir.rtl.Tap(low, (lowWidth - 1) until lowWidth)
+            val lowCorrection = ir.rtl.Concat(
+              Seq(ir.rtl.Const(high.size, 0), lowSign)
+            )
+            val adjustedHigh = ir.rtl.Plus(Seq(extendedHigh, lowCorrection))
+            val lowProduct = ir.rtl.Times(low, right)
+            val highProduct = ir.rtl.Times(adjustedHigh, right)
+            val sumWidth = left.size + right.size + 1
+
+            def signExtend(input: Component, width: Int): Component =
+              require(width >= input.size)
+              if width == input.size then input
+              else
+                val sign = ir.rtl.Tap(
+                  input,
+                  (input.size - 1) until input.size
+                )
+                ir.rtl.Concat(Seq.fill(width - input.size)(sign) :+ input)
+
+            val extendedLowProduct = signExtend(lowProduct, sumWidth)
+            val shiftedHighProduct = ir.rtl.Concat(
+              Seq(
+                signExtend(highProduct, sumWidth - lowWidth),
+                ir.rtl.Const(lowWidth, 0)
+              )
+            )
+            val product = ir.rtl.Plus(
+              Seq(extendedLowProduct, shiftedHighProduct)
+            )
+            ir.rtl.Tap(product, shift until (shift + left.size))
+          else
+            ir.rtl.Tap(
+              ir.rtl.Times(left, right),
+              shift until (shift + left.size)
+            )
 
   override def MID_VALUE: Double = valueOf(BigInt(1) << ((size - 1)/2))
 

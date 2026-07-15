@@ -23,7 +23,7 @@
 
 package ir.rtl.hardwaretype
 
-import ir.rtl.{Component, Concat, Const as RTLConst, Input as RTLInput, Tap}
+import ir.rtl.{Component, Concat, Const as RTLConst, Input as RTLInput, Plus as RTLPlus, Tap, Times as RTLTimes}
 import ir.rtl.signals.{Const, Input, Sig}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -95,3 +95,91 @@ class FixedPointTest extends AnyFunSuite:
     val quarter = lower(input * Const(0.25))
     assert(evaluate(quarter, bits(-10)) == bits(-3))
     assert(evaluate(quarter, bits(10)) == bits(2))
+
+  test("wide fixed-point products should split exactly into two DSP-sized products"):
+    val dataHW = FixedPoint(18, 12)
+    val twiddleHW = FixedPoint(2, 24)
+    val lhs = Input[Double](0)(using dataHW)
+    val rhs = Input[Double](1)(using twiddleHW)
+    val lhsComponent = RTLInput(dataHW.size, "lhs")
+    val rhsComponent = RTLInput(twiddleHW.size, "rhs")
+    val product = (lhs * rhs).implement((signal, _) =>
+      if signal == lhs then lhsComponent
+      else if signal == rhs then rhsComponent
+      else throw IllegalArgumentException(s"Unexpected signal $signal")
+    )
+
+    val multipliers = collection.mutable.Set[Component]()
+    def collect(component: Component): Unit =
+      if multipliers.add(component) then
+        component.parents.foreach(collect)
+    collect(product)
+    assert(multipliers.count(_.isInstanceOf[RTLTimes]) == 2)
+
+    def mask(width: Int): BigInt = (BigInt(1) << width) - 1
+    def signed(value: BigInt, width: Int): BigInt =
+      val truncated = value & mask(width)
+      if truncated.testBit(width - 1) then truncated - (BigInt(1) << width)
+      else truncated
+
+    def evaluate(
+        component: Component,
+        lhsBits: BigInt,
+        rhsBits: BigInt
+    ): BigInt =
+      val result = component match
+        case current if current == lhsComponent => lhsBits
+        case current if current == rhsComponent => rhsBits
+        case RTLConst(_, value) => value
+        case Tap(parent, range) =>
+          evaluate(parent, lhsBits, rhsBits) >> range.start
+        case Concat(parts) =>
+          parts.foldLeft(BigInt(0))((result, part) =>
+            (result << part.size) | evaluate(part, lhsBits, rhsBits)
+          )
+        case RTLPlus(terms) =>
+          terms.map(evaluate(_, lhsBits, rhsBits)).sum
+        case RTLTimes(left, right) =>
+          signed(evaluate(left, lhsBits, rhsBits), left.size) *
+            signed(evaluate(right, lhsBits, rhsBits), right.size)
+        case other =>
+          throw IllegalArgumentException(s"Unexpected component $other")
+      result & mask(component.size)
+
+    val lhsLimit = BigInt(1) << (dataHW.size - 1)
+    val rhsLimit = BigInt(1) << (twiddleHW.size - 1)
+    val boundaryLhs = Seq(
+      -lhsLimit,
+      -lhsLimit + 1,
+      BigInt(-1),
+      BigInt(0),
+      BigInt(1),
+      lhsLimit - 1
+    )
+    val boundaryRhs = Seq(
+      -rhsLimit,
+      -rhsLimit + 1,
+      BigInt(-1),
+      BigInt(0),
+      BigInt(1),
+      rhsLimit - 1
+    )
+    val random = new scala.util.Random(0x465054)
+    val randomInputs = Seq.fill(10000)(
+      (BigInt(dataHW.size, random) - lhsLimit,
+       BigInt(twiddleHW.size, random) - rhsLimit)
+    )
+    val inputs = for
+      left <- boundaryLhs
+      right <- boundaryRhs
+    yield (left, right)
+
+    for (left, right) <- inputs ++ randomInputs do
+      val actual = evaluate(
+        product,
+        left & mask(dataHW.size),
+        right & mask(twiddleHW.size)
+      )
+      val expected = ((left * right) >> twiddleHW.fractional) &
+        mask(dataHW.size)
+      assert(actual == expected, s"$left * $right: $actual != $expected")
