@@ -14,14 +14,35 @@
 package transforms.fft
 
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint, HW}
-import ir.rtl.{AcyclicStreamingModule, RAMControl}
-import ir.rtl.signals.{ROM, Sig, Timer}
+import ir.rtl.{AcyclicStreamingModule, Component, RAMControl}
+import ir.rtl.signals.{Operator, ROM, Sig, Timer}
 import ir.spl.{Repeatable, SPL}
 import maths.fields.Complex
 import maths.fields.Complex.*
 import transforms.HighLevelTransform
 
 import scala.math.Numeric.Implicits.infixNumericOps
+
+private case class PipelineRegister[T](input: Sig[T])
+    extends Operator[T](input)(using input.hw):
+  override val pipeline = 1
+  override def implement(implicit cp: Sig[?] => Component): Component =
+    cp(input)
+
+/** One registered cycle of transform-preserving input alignment. */
+private case class StreamingDelay[T](override val n: Int)
+    extends SPL[T](n)
+    with Repeatable[T]:
+  override def eval(inputs: Seq[T], set: Int): Seq[T] = inputs
+
+  override def stream(k: Int, control: RAMControl)(using
+      HW[T]
+  ): AcyclicStreamingModule[T] =
+    new AcyclicStreamingModule(n - k, k):
+      override def implement(inputs: Seq[Sig[T]]): Seq[Sig[T]] =
+        inputs.map(PipelineRegister(_))
+
+      override def spl: SPL[T] = StreamingDelay(StreamingDelay.this.n)
 
 /** Pointwise tangent-FFT twist for a folded, real polynomial.
   *
@@ -71,7 +92,8 @@ case class TangentCTDFT(
     scalingFactor: Complex[Double]
 ) extends DFT(n, r):
   override protected val spl: SPL[Complex[Double]] =
-    CTDFT(n, r, scalingFactor).spl * TangentTwist(n, inverse = false)
+    CTDFT(n, r, scalingFactor).spl * TangentTwist(n, inverse = false) *
+      StreamingDelay[Complex[Double]](n)
 
 /** Inverse tangent FFT: apply the cyclic inverse DFT, then untwist. */
 case class TangentICTDFT(
