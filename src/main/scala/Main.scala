@@ -30,7 +30,7 @@ import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
 import maths.fields.F2
 import maths.linalg.Matrix
 import transforms.Transform
-import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap}
+import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap, TangentCTDFT, TangentICTDFT}
 import transforms.perm.{LinearPerm, SwitchTranspose}
 import transforms.wht
 
@@ -170,12 +170,18 @@ object Main:
       case "dft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(CTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("DFT requires a complex of fractional hardware datatype.")
+      case "fptdft" => hw match
+        case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
+        case _ => throw new IllegalArgumentException("FPT DFT requires a complex of fractional hardware datatype.")
       case "dftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(ItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("Compact DFT requires a complex of fractional hardware datatype.")
       case "idft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(ICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("iDFT requires a complex of fractional hardware datatype.")
+      case "fptidft" => hw match
+        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
+        case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
       case "idftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(IItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("Compact iDFT requires a complex of fractional hardware datatype.")
@@ -272,5 +278,4 @@ object Main:
           pw.write(imp.getTestBench(design))
         pw.close()
         println(s"Written design in $file.")
-
 
