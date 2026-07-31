@@ -103,11 +103,11 @@ class FixedPointTest extends AnyFunSuite:
     val rhs = Input[Double](1)(using twiddleHW)
     val lhsComponent = RTLInput(dataHW.size, "lhs")
     val rhsComponent = RTLInput(twiddleHW.size, "rhs")
-    val product = (lhs * rhs).implement((signal, _) =>
+    def implementSig(signal: Sig[?]): Component =
       if signal == lhs then lhsComponent
       else if signal == rhs then rhsComponent
-      else throw IllegalArgumentException(s"Unexpected signal $signal")
-    )
+      else signal.implement((parent, _) => implementSig(parent))
+    val product = implementSig(lhs * rhs)
 
     val multipliers = collection.mutable.Set[Component]()
     def collect(component: Component): Unit =

@@ -25,7 +25,7 @@ package ir.rtl.hardwaretype
 
 import Utils.BigIterator
 import ir.rtl.Component
-import ir.rtl.signals.{Const, Minus, Plus, Sig, Times}
+import ir.rtl.signals.{Const, Minus, Operator, Plus, Sig, Times}
 
 /**
  * Fixed point arithmetic representation
@@ -38,7 +38,26 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
 
   override def minus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixMinus(lhs, rhs)
 
-  override def times(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixTimes(lhs, rhs)
+  override def times(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] =
+    val powerOfTwo = rhs match
+      case Const(value) if value > 0 && rhs.hw.bitsOf(value).bitCount == 1 => true
+      case _ => false
+    if !powerOfTwo && lhs.hw.size > 27 && lhs.hw.size <= 35 && rhs.hw.size <= 27 then
+      // Split wide products at the signal level so each partial product is
+      // its own scheduled node. The declared pipeline registers then land
+      // directly on the DSP48E2 outputs, where synthesis absorbs them as
+      // MREG/PREG stages; keeping the split inside one combinational
+      // implement() left every register after the recombination adder and
+      // the whole DSP path unregistered (221.9 MHz forward on the U280).
+      FixSplitSum(
+        FixSplitProduct(FixSplitLow(lhs), rhs),
+        FixSplitProduct(FixSplitHigh(lhs), rhs),
+        lhs.hw.size,
+        rhs.hw.size,
+        rhs.hw.asInstanceOf[FixedPoint].fractional,
+        this
+      )
+    else FixTimes(lhs, rhs)
 
   override def bitsOf(const: Double): BigInt = {
     require(const.isFinite)
@@ -82,6 +101,80 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
     override def pipeline = 1
 
     override def implement(implicit cp: Sig[?] => Component) = ir.rtl.Minus(cp(this.lhs), cp(this.rhs))
+
+  private val dspLowWidth = 18
+
+  /** Low DSP chunk of a split left operand; pure wiring. */
+  private case class FixSplitLow(input: Sig[Double])
+      extends Operator[Double](input)(using FixedPoint(dspLowWidth, 0)):
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      ir.rtl.Tap(cp(input), 0 until dspLowWidth)
+
+  /** Signed high chunk plus the low chunk's sign bit. Registered so the
+    * correction adder cannot merge into the multiplier's critical path.
+    */
+  private case class FixSplitHigh(input: Sig[Double])
+      extends Operator[Double](input)(
+        using FixedPoint(input.hw.size - dspLowWidth + 1, 0)
+      ):
+    override def pipeline = 1
+
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      val left = cp(input)
+      val high = ir.rtl.Tap(left, dspLowWidth until left.size)
+      val highSign = ir.rtl.Tap(high, (high.size - 1) until high.size)
+      val extendedHigh = ir.rtl.Concat(Seq(highSign, high))
+      val lowSign = ir.rtl.Tap(left, (dspLowWidth - 1) until dspLowWidth)
+      val lowCorrection = ir.rtl.Concat(
+        Seq(ir.rtl.Const(high.size, 0), lowSign)
+      )
+      ir.rtl.Plus(Seq(extendedHigh, lowCorrection))
+
+  /** One DSP48E2-sized product. Its pipeline registers follow the raw
+    * multiplier output directly, so synthesis absorbs them as DSP
+    * pipeline stages instead of leaving the multiplier combinational.
+    */
+  private case class FixSplitProduct(a: Sig[Double], b: Sig[Double])
+      extends Operator[Double](a, b)(
+        using FixedPoint(a.hw.size + b.hw.size, 0)
+      ):
+    override def pipeline = 3
+
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      ir.rtl.Times(cp(a), cp(b))
+
+  /** Recombination of the two partial products and the fractional shift. */
+  private case class FixSplitSum(
+      low: Sig[Double],
+      high: Sig[Double],
+      leftSize: Int,
+      rightSize: Int,
+      shift: Int,
+      result: FixedPoint
+  ) extends Operator[Double](low, high)(using result):
+    override def pipeline = 1
+
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      val sumWidth = leftSize + rightSize + 1
+
+      def signExtend(input: Component, width: Int): Component =
+        require(width >= input.size)
+        if width == input.size then input
+        else
+          val sign = ir.rtl.Tap(input, (input.size - 1) until input.size)
+          ir.rtl.Concat(Seq.fill(width - input.size)(sign) :+ input)
+
+      val extendedLowProduct = signExtend(cp(this.low), sumWidth)
+      val shiftedHighProduct = ir.rtl.Concat(
+        Seq(
+          signExtend(cp(this.high), sumWidth - dspLowWidth),
+          ir.rtl.Const(dspLowWidth, 0)
+        )
+      )
+      val product = ir.rtl.Plus(
+        Seq(extendedLowProduct, shiftedHighProduct)
+      )
+      ir.rtl.Tap(product, shift until (shift + leftSize))
 
   private case class FixTimes(override val lhs: Sig[Double], override val rhs: Sig[Double]) extends Times(lhs, rhs):
     override def pipeline = this.rhs match
