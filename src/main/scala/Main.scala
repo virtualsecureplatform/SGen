@@ -30,7 +30,7 @@ import maths.fields.F2
 import maths.linalg.Matrix
 import transforms.Transform
 import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap}
-import transforms.perm.LinearPerm
+import transforms.perm.{LinearPerm, SwitchTranspose}
 import transforms.wht
 
 import java.io.{BufferedInputStream, FileInputStream, FileOutputStream, PrintWriter}
@@ -154,6 +154,10 @@ object Main:
         finish(LinearPerm(matrices.toSeq), hw)
       case "bitrev" => finish(Rmat(r,n), hw)
       case "stride" => finish(Lmat(r,n), hw)
+      case "switchtranspose" =>
+        require(n % 2 == 0, s"Switch transpose requires an even n, got n=$n.")
+        require(k == n / 2, s"Switch transpose requires k=n/2=${n / 2}, got k=$k.")
+        finish(SwitchTranspose(n / 2), hw.asInstanceOf)
       case "wht" => finish(wht.CTWHT(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)
       case "whtcompact" => finish(wht.ItPeaseFused(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)
       case "dft" => hw match
@@ -261,7 +265,6 @@ object Main:
           pw.write(imp.getTestBench(design))
         pw.close()
         println(s"Written design in $file.")
-
 
 
 

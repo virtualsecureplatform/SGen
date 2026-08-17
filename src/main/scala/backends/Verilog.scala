@@ -35,11 +35,96 @@ import scala.annotation.tailrec
  * Adds a Verilog backend to modules.
  */
 object Verilog {
+  private def switchTransposeUnit(logSize: Int, dataWidth: Int): String =
+    val lanes = 1 << logSize
+    val half = lanes / 2
+    val suffix = s"${logSize}_$dataWidth"
+    def upper(lane: Int, stage: Int) = s"upper_${lane}_$stage"
+    def lower(lane: Int, stage: Int) = s"lower_${lane}_$stage"
+    val registers = (for lane <- 0 until half; stage <- 0 until half yield
+      s"reg [${dataWidth - 1}:0] ${upper(lane, stage)}; reg [${dataWidth - 1}:0] ${lower(lane, stage)};"
+    ).mkString("\n  ")
+    val outputs = (0 until half).flatMap(lane => Seq(
+      s"assign data_out[${lane * dataWidth} +: $dataWidth] = ${lower(lane, half - 1)};",
+      s"assign data_out[${(lane + half) * dataWidth} +: $dataWidth] = select ? data_in[${lane * dataWidth} +: $dataWidth] : ${upper(lane, half - 1)};"
+    )).mkString("\n  ")
+    val resetPipes = (for lane <- 0 until half; stage <- 0 until half yield
+      s"${upper(lane, stage)} <= 0; ${lower(lane, stage)} <= 0;"
+    ).mkString("\n      ")
+    val shiftPipes = (0 until half).flatMap { lane =>
+      Seq(
+        s"${upper(lane, 0)} <= data_in[${(lane + half) * dataWidth} +: $dataWidth];",
+        s"${lower(lane, 0)} <= select ? ${upper(lane, half - 1)} : data_in[${lane * dataWidth} +: $dataWidth];"
+      ) ++ (1 until half).flatMap(stage => Seq(
+        s"${upper(lane, stage)} <= ${upper(lane, stage - 1)};",
+        s"${lower(lane, stage)} <= ${lower(lane, stage - 1)};"
+      ))
+    }.mkString("\n      ")
+    val control =
+      if logSize == 1 then
+        """valid_out <= valid_in;
+          |      if (valid_in) select <= ~select;
+          |      else select <= 0;""".stripMargin
+      else
+        s"""case (state)
+           |        0: if (valid_in) begin state <= 1; count <= count + 1; end
+           |        1: begin count <= count + 1; if (count == ${half - 1}) begin select <= ~select; count <= 0; valid_out <= 1; state <= 2; end end
+           |        2: begin count <= count + 1; if (count == ${half - 1}) begin select <= ~select; count <= 0; if ((~select) && (~valid_in)) begin valid_out <= 0; select <= 0; state <= 0; end end end
+           |        default: begin state <= 0; valid_out <= 0; select <= 0; count <= 0; end
+           |      endcase""".stripMargin
+    s"""module SGenSwitchTransposeUnit_$suffix(
+       |  input clk, input reset, input valid_in,
+       |  input [${lanes * dataWidth - 1}:0] data_in,
+       |  output reg valid_out, output [${lanes * dataWidth - 1}:0] data_out
+       |);
+       |  reg select;${if logSize == 1 then "" else " reg [1:0] state; integer count;"}
+       |  $registers
+       |  $outputs
+       |  always @(posedge clk) begin
+       |    if (reset) begin valid_out <= 0; select <= 0;${if logSize == 1 then "" else " state <= 0; count <= 0;"}
+       |      $resetPipes
+       |    end else begin
+       |      $shiftPipes
+       |      $control
+       |    end
+       |  end
+       |endmodule
+       |""".stripMargin
+
+  private def switchTransposeNetwork(logSize: Int, dataWidth: Int): String =
+    val lanes = 1 << logSize
+    val suffix = s"${logSize}_$dataWidth"
+    if logSize == 1 then
+      s"""module SGenSwitchTransposeNetwork_$suffix(input clk,input reset,input valid_in,input [${2 * dataWidth - 1}:0] data_in,output valid_out,output [${2 * dataWidth - 1}:0] data_out);
+         |  SGenSwitchTransposeUnit_$suffix unit(clk,reset,valid_in,data_in,valid_out,data_out);
+         |endmodule
+         |""".stripMargin
+    else
+      val halfWidth = lanes * dataWidth / 2
+      val childSuffix = s"${logSize - 1}_$dataWidth"
+      s"""module SGenSwitchTransposeNetwork_$suffix(input clk,input reset,input valid_in,input [${lanes * dataWidth - 1}:0] data_in,output valid_out,output [${lanes * dataWidth - 1}:0] data_out);
+         |  wire unit_valid, lower_valid, upper_valid; wire [${lanes * dataWidth - 1}:0] unit_data;
+         |  SGenSwitchTransposeUnit_$suffix unit(clk,reset,valid_in,data_in,unit_valid,unit_data);
+         |  SGenSwitchTransposeNetwork_$childSuffix lower(clk,reset,unit_valid,unit_data[0 +: $halfWidth],lower_valid,data_out[0 +: $halfWidth]);
+         |  SGenSwitchTransposeNetwork_$childSuffix upper(clk,reset,unit_valid,unit_data[$halfWidth +: $halfWidth],upper_valid,data_out[$halfWidth +: $halfWidth]);
+         |  assign valid_out = lower_valid & upper_valid;
+         |endmodule
+         |""".stripMargin
+
+  private def switchTransposeDefinitions(logSize: Int, dataWidth: Int): String =
+    (1 to logSize).map(level => switchTransposeUnit(level, dataWidth) + switchTransposeNetwork(level, dataWidth)).mkString("\n")
+
   extension (mod:Module)
     /**
      * @return a string containing the verilog code of the module
      */
     def toVerilog: String =
+      val requestedSwitchNetworks = mod.components.collect {
+        case cur: SwitchTransposeNetworkComponent => (cur.logSize, cur.dataWidth)
+      }
+      val switchNetworks = requestedSwitchNetworks.groupBy(_._2).map { case (dataWidth, networks) =>
+        (networks.map(_._1).max, dataWidth)
+      }
       // Get IDs for each regular RTL nodes. An RTL node may use several ids.
       val indexes = HashMap.from(mod.components.zip(mod.components.map {
         case _: Input | _: Output | _: Wire | _: Const => 0
@@ -115,10 +200,18 @@ object Verilog {
         case cur: Extern =>
           mod.dependencies.add(cur.filename)
           Seq(s"${cur.module} ext_${getName(cur)}(${cur.inputs.map { case (name, comp) => s".$name(${getName(comp)}), " }.mkString}.${cur.outputName}(${getName(cur)}));")
+        case cur: SwitchTransposeNetworkComponent =>
+          val suffix = s"${cur.logSize}_${cur.dataWidth}"
+          val packedInputs = cur.data.reverse.map(getName(_)).mkString("{", ", ", "}")
+          Seq(s"SGenSwitchTransposeNetwork_$suffix ext_${getName(cur)}(.clk(clk), .reset(${getName(cur.reset)}), .valid_in(${getName(cur.validIn)}), .data_in($packedInputs), .valid_out(), .data_out(${getName(cur)}));")
         case _ => Seq()
       }.map(s => s"  $s\n").mkString("")
 
       val result = new StringBuilder
+      switchNetworks.foreach { case (logSize, dataWidth) =>
+        result ++= switchTransposeDefinitions(logSize, dataWidth)
+        result ++= "\n"
+      }
       result ++= s"module main(input clk,\n"
       result ++= mod.inputs.map(s => s"  input ${if (s.size != 1) s"[${s.size - 1}:0] " else ""}${getName(s)},\n").mkString("")
       result ++= mod.outputs.map(s => s"  output ${if (s.size != 1) s"[${s.size - 1}:0] " else ""}${getName(s)}").mkString(",\n")

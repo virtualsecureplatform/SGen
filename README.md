@@ -87,6 +87,7 @@ sgen.bat [options] <transform‑name> [lp matrices...]
 | Category                                                                | Command                | Example |
 |-------------------------------------------------------------------------|------------------------|---------|
 | [Linear permutations](https://acl.inf.ethz.ch/research/hardware/perms/) | `lp`                   | `sgen.bat -n 5 -k 2 lp bitrev` |
+| **Switch transpose**                                                   | `switchtranspose`      | `sgen.bat -n 6 -k 3 -hw int switchtranspose` |
 | **DFT (full‑throughput / compact)**                                     | `dft` / `dftcompact`   | `sgen.bat -n 4 -k 2 -hw complex fixedpoint 8 8 dft` |
 | **Inverse DFT (full‑throughput / compact)**                             | `idft` / `idftcompact` | `sgen.bat -n 10 -k 3 -hw complex fixedpoint 8 8 idft` |
 | **Walsh‑Hadamard (full‑throughput / compact)**                          | `wht` / `whtcompact`   | `sgen.bat -n 6 -k 3 -hw fixedpoint 8 8 wht` |
@@ -103,6 +104,12 @@ Convenient shortcuts:
 | `identity` | No change. |
 
 Multiple matrices can be listed, separated by spaces. The *i‑th* matrix will be applied to the *i‑th* incoming dataset. 
+
+`switchtranspose` emits a full-throughput recursive `SwitchTransposeUnit`
+network for a square lane/time transpose. It requires an even `n` and
+`k = n/2`, so a dataset has `2^k` lanes over `2^k` cycles. Its latency is
+`2^k - 1` cycles. Unlike the generic `stride`/`lp` lowering, this command
+selects the switch-register architecture explicitly.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 

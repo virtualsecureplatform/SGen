@@ -118,6 +118,14 @@ case class RAM(data: Component, wr: Component, rd: Component) extends ImmutableC
 
 case class Extern(override val size:Int, filename:String, module:String, outputName:String, inputs:(String,Component)*) extends ImmutableComponent(size,inputs.map(_._2)*)
 
+/** Packed output of a recursive lane/time switch-transpose network. */
+case class SwitchTransposeNetworkComponent(data: Seq[Component], validIn: Component, reset: Component, logSize: Int, dataWidth: Int)
+  extends ImmutableComponent(data.size * dataWidth, (data ++ Seq(validIn, reset))*):
+  require(logSize > 0)
+  require(data.size == (1 << logSize))
+  require(dataWidth > 0 && data.forall(_.size == dataWidth))
+  require(validIn.size == 1 && reset.size == 1)
+
 object ROM:
   def unapply(arg:Mux) =
     if arg.inputs.forall(_.isInstanceOf[Const]) then
