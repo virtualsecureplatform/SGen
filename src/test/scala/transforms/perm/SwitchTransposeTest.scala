@@ -25,3 +25,5 @@ class SwitchTransposeTest extends AnyFunSuiteLike:
     assert(rtl.contains("Exchanges 4 temporal cycles with 8 spatial lanes"))
     assert(rtl.contains("input [15:0] i7"))
     assert(rtl.contains("output reg [15:0] o3"))
+    assert(rtl.contains("output ready"))
+    assert(rtl.contains("storage_0") && rtl.contains("storage_1"))

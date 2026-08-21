@@ -114,6 +114,13 @@ For example, `-n 5 -k 3` transposes four cycles of eight values into eight
 cycles of four values. Unlike the generic `stride`/`lp` lowering, this command
 selects the switch-transpose architecture explicitly.
 
+Rectangular SGen adapters expose a `ready` signal. Start a new frame with
+`next` only while `ready` is high. The adapter uses two tensor buffers, so it
+overlaps capture and drain whenever the output width provides sufficient
+bandwidth. A transpose from a wider input vector to a narrower output vector
+must eventually deassert `ready`: that is a fundamental rate conversion, not a
+buffering limitation.
+
 The FPT tangent FFT has matching square switch-backed commands:
 
 ```bash
