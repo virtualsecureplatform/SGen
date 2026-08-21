@@ -3,6 +3,7 @@ package transforms.fft
 import maths.fields.Complex
 import maths.fields.Complex.*
 import backends.Verilog.*
+import backends.FptSwitchTangentVerilog
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -49,3 +50,9 @@ class TangentTwistTest extends AnyFunSuite:
     val module = transform.stream(3, ir.rtl.RAMControl.Single)(using ComplexHW(FixedPoint(8, 12)))
     val rtl = module.toVerilog
     assert(rtl.contains("SGenSwitchTransposeNetwork_3"))
+
+  test("rectangular switch-backed tangent wrapper adapts the twist width"):
+    val rtl = FptSwitchTangentVerilog.emit(5, 1, 3, ComplexHW(FixedPoint(8, 12)), Complex(1.0), inverse = false)
+    assert(rtl.contains("Input width: 8 lanes; twist width: 4 lanes"))
+    assert(rtl.contains("module mainRectForward"))
+    assert(rtl.contains("module mainRectReverse"))

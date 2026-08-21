@@ -24,6 +24,7 @@
 import backends.DOT.*
 import backends.Verilog.*
 import backends.RectangularSwitchTransposeVerilog
+import backends.FptSwitchTangentVerilog
 import buildinfo.BuildInfo
 import ir.rtl.hardwaretype.*
 import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
@@ -174,7 +175,12 @@ object Main:
         case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT DFT requires a complex of fractional hardware datatype.")
       case "fptdftswitch" => hw match
-        case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentCTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] =>
+          require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT DFT currently emits Verilog only")
+          val file=filename("design.v");val pw=new PrintWriter(file)
+          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=false));pw.close()
+          println(s"Written rectangular switch-backed FPT DFT in $file.")
         case _ => throw new IllegalArgumentException("Switch-backed FPT DFT requires a complex of fractional hardware datatype.")
       case "dftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(ItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
@@ -186,7 +192,12 @@ object Main:
         case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
       case "fptidftswitch" => hw match
-        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentICTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] =>
+          require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT iDFT currently emits Verilog only")
+          val file=filename("design.v");val pw=new PrintWriter(file)
+          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=true));pw.close()
+          println(s"Written rectangular switch-backed FPT iDFT in $file.")
         case _ => throw new IllegalArgumentException("Switch-backed FPT iDFT requires a complex of fractional hardware datatype.")
       case "idftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(IItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
