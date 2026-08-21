@@ -149,7 +149,9 @@ frame interval and a top-level `ready` port is not wanted. For no-gap forward
 FPT throughput, use `-rate-preserving`: SGen partitions the tangent stage into
 `2^(2k-n)` parallel square switch/twist blocks and retains the original FFT
 width. Thus `-n 9 -k 5` uses two 16×16 blocks, while `-n 9 -k 6` uses eight
-8×8 blocks. Rate-preserving `fptidftswitch` is not yet emitted.
+8×8 blocks. The same `-rate-preserving` block partition is available for
+`fptidftswitch`: it applies the inverse FFT first, then the strided inverse
+tangent twists and reverse switch blocks.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 

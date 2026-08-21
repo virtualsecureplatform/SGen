@@ -63,3 +63,9 @@ class TangentTwistTest extends AnyFunSuite:
     assert(rtl.contains("2 parallel 4x4 switch/twist blocks"))
     assert(rtl.contains("module mainTwist0"))
     assert(rtl.contains("module mainTwist1"))
+
+  test("rate-preserving inverse tangent wrapper places blocks after the inverse FFT"):
+    val rtl = FptParallelSwitchTangentVerilog.emit(5, 1, 3, ComplexHW(FixedPoint(8, 12)), Complex(0.5), inverse = true)
+    assert(rtl.contains("parallel switch FPT tangent inverse FFT"))
+    assert(rtl.contains("module mainInverseCore"))
+    assert(rtl.contains(".next(fft_next)"))
