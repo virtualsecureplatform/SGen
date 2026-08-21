@@ -106,10 +106,13 @@ Convenient shortcuts:
 Multiple matrices can be listed, separated by spaces. The *i‑th* matrix will be applied to the *i‑th* incoming dataset. 
 
 `switchtranspose` emits a full-throughput recursive `SwitchTransposeUnit`
-network for a square lane/time transpose. It requires an even `n` and
-`k = n/2`, so a dataset has `2^k` lanes over `2^k` cycles. Its latency is
-`2^k - 1` cycles. Unlike the generic `stride`/`lp` lowering, this command
-selects the switch-register architecture explicitly.
+network for a square lane/time transpose (`k = n/2`), so a dataset has `2^k`
+lanes over `2^k` cycles. Its latency is `2^k - 1` cycles. For a non-square
+shape, `-k` is the input lane log and `n-k` is the input cycle log; SGen emits
+a rectangular width adapter with `2^k` input lanes and `2^(n-k)` output lanes.
+For example, `-n 5 -k 3` transposes four cycles of eight values into eight
+cycles of four values. Unlike the generic `stride`/`lp` lowering, this command
+selects the switch-transpose architecture explicitly.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 

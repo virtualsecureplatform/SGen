@@ -23,6 +23,7 @@
 
 import backends.DOT.*
 import backends.Verilog.*
+import backends.RectangularSwitchTransposeVerilog
 import buildinfo.BuildInfo
 import ir.rtl.hardwaretype.*
 import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
@@ -155,9 +156,15 @@ object Main:
       case "bitrev" => finish(Rmat(r,n), hw)
       case "stride" => finish(Lmat(r,n), hw)
       case "switchtranspose" =>
-        require(n % 2 == 0, s"Switch transpose requires an even n, got n=$n.")
-        require(k == n / 2, s"Switch transpose requires k=n/2=${n / 2}, got k=$k.")
-        finish(SwitchTranspose(n / 2), hw.asInstanceOf)
+        require(k < n, s"Rectangular switch transpose requires 0<k<n; got n=$n, k=$k.")
+        if k == n / 2 then finish(SwitchTranspose(n / 2), hw.asInstanceOf)
+        else
+          require(!graph && !rtlgraph && !zip && !testbench, "rectangular switchtranspose currently emits Verilog only")
+          val file=filename("design.v")
+          val pw=new PrintWriter(file)
+          pw.println(RectangularSwitchTransposeVerilog.emit(n-k,k,hw.size))
+          pw.close()
+          println(s"Written rectangular switch transpose in $file.")
       case "wht" => finish(wht.CTWHT(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)
       case "whtcompact" => finish(wht.ItPeaseFused(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)
       case "dft" => hw match
@@ -265,6 +272,5 @@ object Main:
           pw.write(imp.getTestBench(design))
         pw.close()
         println(s"Written design in $file.")
-
 
 

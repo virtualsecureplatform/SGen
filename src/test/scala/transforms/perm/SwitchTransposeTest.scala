@@ -1,6 +1,7 @@
 package transforms.perm
 
 import backends.Verilog.*
+import backends.RectangularSwitchTransposeVerilog
 import ir.rtl.hardwaretype.Unsigned
 import org.scalatest.funsuite.AnyFunSuiteLike
 
@@ -18,3 +19,9 @@ class SwitchTransposeTest extends AnyFunSuiteLike:
     assert(rtl.contains("module SGenSwitchTransposeUnit_3_16"))
     assert(rtl.contains("module SGenSwitchTransposeNetwork_2_16"))
     assert(rtl.contains("SGenSwitchTransposeNetwork_3_16 ext_"))
+
+  test("rectangular switch transpose changes the stream width"):
+    val rtl=RectangularSwitchTransposeVerilog.emit(cycleLog=2,laneLog=3,dataWidth=16)
+    assert(rtl.contains("Exchanges 4 temporal cycles with 8 spatial lanes"))
+    assert(rtl.contains("input [15:0] i7"))
+    assert(rtl.contains("output reg [15:0] o3"))
