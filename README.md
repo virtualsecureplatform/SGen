@@ -114,6 +114,18 @@ For example, `-n 5 -k 3` transposes four cycles of eight values into eight
 cycles of four values. Unlike the generic `stride`/`lp` lowering, this command
 selects the switch-transpose architecture explicitly.
 
+The FPT tangent FFT has matching square switch-backed commands:
+
+```bash
+sgen.bat -n 6 -k 3 -r 1 -hw complex fixedpoint 8 12 fptdftswitch
+sgen.bat -n 6 -k 3 -r 1 -hw complex fixedpoint 8 12 fptidftswitch
+```
+
+They use paired recursive switch transposes around a coordinate-aware tangent
+twist. The external stream order and mathematical transform are unchanged;
+the internal twist ROM follows the transposed `(lane, cycle)` address. These
+FPT variants require square streaming (`n = 2k`).
+
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 
 #### Example: streaming bit‑reversal

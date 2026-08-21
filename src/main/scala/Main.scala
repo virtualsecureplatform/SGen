@@ -30,7 +30,7 @@ import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
 import maths.fields.F2
 import maths.linalg.Matrix
 import transforms.Transform
-import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap, TangentCTDFT, TangentICTDFT}
+import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap, TangentCTDFT, TangentCTDFTWithSwitch, TangentICTDFT, TangentICTDFTWithSwitch}
 import transforms.perm.{LinearPerm, SwitchTranspose}
 import transforms.wht
 
@@ -173,6 +173,9 @@ object Main:
       case "fptdft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT DFT requires a complex of fractional hardware datatype.")
+      case "fptdftswitch" => hw match
+        case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case _ => throw new IllegalArgumentException("Switch-backed FPT DFT requires a complex of fractional hardware datatype.")
       case "dftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(ItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("Compact DFT requires a complex of fractional hardware datatype.")
@@ -182,6 +185,9 @@ object Main:
       case "fptidft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
+      case "fptidftswitch" => hw match
+        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case _ => throw new IllegalArgumentException("Switch-backed FPT iDFT requires a complex of fractional hardware datatype.")
       case "idftcompact" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(IItPeaseFused(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("Compact iDFT requires a complex of fractional hardware datatype.")
@@ -278,4 +284,3 @@ object Main:
           pw.write(imp.getTestBench(design))
         pw.close()
         println(s"Written design in $file.")
-

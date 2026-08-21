@@ -20,6 +20,7 @@ import ir.spl.{Repeatable, SPL}
 import maths.fields.Complex
 import maths.fields.Complex.*
 import transforms.HighLevelTransform
+import transforms.perm.SwitchTranspose
 
 import scala.math.Numeric.Implicits.infixNumericOps
 
@@ -85,6 +86,42 @@ case class TangentTwist(override val n: Int, inverse: Boolean)
       override def spl: SPL[Complex[Double]] =
         TangentTwist(TangentTwist.this.n, inverse)
 
+/** Tangent twist expressed in the coordinates after a square lane/time switch.
+  * The value at post-switch (cycle, lane) originates from pre-switch
+  * (lane, cycle), so its coefficient address is lane*T + cycle.
+  */
+case class TangentTwistAfterSwitch(override val n: Int, laneLog: Int, inverse: Boolean)
+    extends SPL[Complex[Double]](n)
+    with Repeatable[Complex[Double]]:
+  require(n == 2 * laneLog, s"switch-aware tangent twist requires n=2k; got n=$n, k=$laneLog")
+  private val base = TangentTwist(n, inverse)
+
+  override def eval(inputs: Seq[Complex[Double]], set: Int): Seq[Complex[Double]] =
+    val lanes = 1 << laneLog
+    val cycles = lanes
+    Vector.tabulate(N) { index =>
+      val cycle = index / lanes
+      val lane = index % lanes
+      inputs(index) * base.coef(lane * cycles + cycle)
+    }
+
+  override def stream(k: Int, control: RAMControl)(using
+      HW[Complex[Double]]
+  ): AcyclicStreamingModule[Complex[Double]] =
+    require(k == laneLog, s"switch-aware tangent twist requires k=$laneLog, got $k")
+    new AcyclicStreamingModule(n - k, k):
+      override def implement(inputs: Seq[Sig[Complex[Double]]]): Seq[Sig[Complex[Double]]] =
+        (0 until K).map { lane =>
+          val twiddles = Vector.tabulate(T)(cycle => base.coef(lane * T + cycle))
+          val twiddleHW = hw match
+            case ComplexHW(FixedPoint(magnitude, fractional)) => ComplexHW(FixedPoint(2, magnitude + fractional - 6))
+            case _ => hw
+          inputs(lane) * ROM(twiddles, Timer(T))(using twiddleHW)
+        }
+
+      override def spl: SPL[Complex[Double]] =
+        TangentTwistAfterSwitch(TangentTwistAfterSwitch.this.n, laneLog, inverse)
+
 /** Forward tangent FFT: twist first, then apply the cyclic DFT. */
 case class TangentCTDFT(
     override val n: Int,
@@ -102,3 +139,33 @@ case class TangentICTDFT(
 ) extends DFT(n, r):
   override protected val spl: SPL[Complex[Double]] =
     TangentTwist(n, inverse = true) * ICTDFT(n, r, scalingFactor).spl
+
+/** Tangent FFT lowered through two square SwitchTransposeUnit networks.
+  * The paired transposes preserve the external stream order while allowing the
+  * twist ROM to follow the transposed lane/time coordinate system.
+  */
+case class TangentCTDFTWithSwitch(
+    override val n: Int,
+    r: Int,
+    laneLog: Int,
+    scalingFactor: Complex[Double]
+) extends DFT(n, r):
+  require(n == 2 * laneLog, s"switch-backed tangent FFT requires n=2k; got n=$n, k=$laneLog")
+  override protected val spl: SPL[Complex[Double]] =
+    CTDFT(n, r, scalingFactor).spl *
+      SwitchTranspose[Complex[Double]](laneLog) *
+      TangentTwistAfterSwitch(n, laneLog, inverse = false) *
+      SwitchTranspose[Complex[Double]](laneLog)
+
+case class TangentICTDFTWithSwitch(
+    override val n: Int,
+    r: Int,
+    laneLog: Int,
+    scalingFactor: Complex[Double]
+) extends DFT(n, r):
+  require(n == 2 * laneLog, s"switch-backed tangent inverse FFT requires n=2k; got n=$n, k=$laneLog")
+  override protected val spl: SPL[Complex[Double]] =
+    SwitchTranspose[Complex[Double]](laneLog) *
+      TangentTwistAfterSwitch(n, laneLog, inverse = true) *
+      SwitchTranspose[Complex[Double]](laneLog) *
+      ICTDFT(n, r, scalingFactor).spl

@@ -2,6 +2,8 @@ package transforms.fft
 
 import maths.fields.Complex
 import maths.fields.Complex.*
+import backends.Verilog.*
+import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.math.Numeric.Implicits.infixNumericOps
@@ -30,3 +32,20 @@ class TangentTwistTest extends AnyFunSuite:
       )
       val outputs = inverse.eval(forward.eval(inputs, 0), 0)
       outputs.zip(inputs).foreach(close)
+
+  for
+    n <- 2 to 8 by 2
+    r <- 1 to n if n % r == 0
+  do
+    test(s"Switch-backed tangent FFT preserves tangent FFT semantics (size ${1 << n}, radix ${1 << r})"):
+      val laneLog = n / 2
+      val standard = TangentCTDFT(n, r, Complex(1.0))
+      val switched = TangentCTDFTWithSwitch(n, r, laneLog, Complex(1.0))
+      val inputs = Seq.tabulate(1 << n)(i => Complex(Math.sin(0.17 * i), Math.cos(0.23 * i)))
+      standard.eval(inputs, 0).zip(switched.eval(inputs, 0)).foreach(close)
+
+  test("switch-backed tangent FFT emits the recursive switch network"):
+    val transform = TangentCTDFTWithSwitch(6, 1, 3, Complex(1.0))
+    val module = transform.stream(3, ir.rtl.RAMControl.Single)(using ComplexHW(FixedPoint(8, 12)))
+    val rtl = module.toVerilog
+    assert(rtl.contains("SGenSwitchTransposeNetwork_3"))
