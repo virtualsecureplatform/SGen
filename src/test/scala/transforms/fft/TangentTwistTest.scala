@@ -6,6 +6,7 @@ import backends.Verilog.*
 import backends.FptSwitchTangentVerilog
 import backends.FptParallelSwitchTangentVerilog
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
+import ir.rtl.RAMControl
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.math.Numeric.Implicits.infixNumericOps
@@ -69,3 +70,19 @@ class TangentTwistTest extends AnyFunSuite:
     assert(rtl.contains("parallel switch FPT tangent inverse FFT"))
     assert(rtl.contains("module mainInverseCore"))
     assert(rtl.contains(".next(fft_next)"))
+
+  test("parallel block addressing equals the global tangent twist for n=9"):
+    def parallelTwist(laneLog: Int, inverse: Boolean, input: Seq[Complex[Double]]): Vector[Complex[Double]] =
+      val cycleLog = 9 - laneLog
+      val cycles = 1 << cycleLog
+      val blocks = 1 << (laneLog - cycleLog)
+      val lanes = 1 << laneLog
+      val twist = TangentTwist(9, inverse)
+      val output = input.toArray
+      for block <- 0 until blocks; cycle <- 0 until cycles; lane <- 0 until cycles do
+        val index = lane * lanes + block * cycles + cycle
+        output(index) = input(index) * twist.coef(index)
+      output.toVector
+    for laneLog <- Seq(5, 6); inverse <- Seq(false, true) do
+      val input = Vector.tabulate(512)(i => Complex(Math.sin(0.07 * i), Math.cos(0.11 * i)))
+      TangentTwist(9, inverse).eval(input, 0).zip(parallelTwist(laneLog, inverse, input)).foreach(close)

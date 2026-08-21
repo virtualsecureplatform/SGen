@@ -22,7 +22,7 @@ object RectangularSwitchTransposeVerilog:
     }.mkString(" ")
     val ratePreservingAssignments=(buffer:Int)=>Vector.tabulate(externalLanes){lane=>
       val linear=s"(output_count*$lanes+$lane)"
-      s"o$lane<=storage_$buffer[($linear/$cycles)*$lanes+($linear%$cycles)];"
+      s"o$lane<=storage_$buffer[($linear%$cycles)*$lanes+($linear/$cycles)];"
     }.mkString(" ")
     val captureAssignments=(buffer:Int)=>Vector.tabulate(lanes){lane=>
       s"storage_$buffer[input_count*$lanes+$lane]<=i$lane;"
