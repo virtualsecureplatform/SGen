@@ -145,7 +145,11 @@ the twist while the FFT core retains its original width. For example, both
 width changes respectively.
 
 Add `-fixed-rate` to the rectangular FPT forms when upstream uses that static
-frame interval and a top-level `ready` port is not wanted.
+frame interval and a top-level `ready` port is not wanted. For no-gap forward
+FPT throughput, use `-rate-preserving`: SGen partitions the tangent stage into
+`2^(2k-n)` parallel square switch/twist blocks and retains the original FFT
+width. Thus `-n 9 -k 5` uses two 16×16 blocks, while `-n 9 -k 6` uses eight
+8×8 blocks. Rate-preserving `fptidftswitch` is not yet emitted.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 

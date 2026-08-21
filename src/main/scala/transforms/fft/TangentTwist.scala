@@ -90,29 +90,38 @@ case class TangentTwist(override val n: Int, inverse: Boolean)
   * The value at post-switch (cycle, lane) originates from pre-switch
   * (lane, cycle), so its coefficient address is lane*T + cycle.
   */
-case class TangentTwistAfterSwitch(override val n: Int, laneLog: Int, inverse: Boolean)
+case class TangentTwistAfterSwitch(
+    override val n: Int,
+    laneLog: Int,
+    inverse: Boolean,
+    laneStride: Int = 1,
+    cycleOffset: Int = 0,
+    cycleLog: Int = -1
+)
     extends SPL[Complex[Double]](n)
     with Repeatable[Complex[Double]]:
-  require(n == 2 * laneLog, s"switch-aware tangent twist requires n=2k; got n=$n, k=$laneLog")
+  private val effectiveCycleLog = if cycleLog < 0 then laneLog else cycleLog
+  require(laneLog >= 0 && effectiveCycleLog >= 0 && laneLog + effectiveCycleLog <= n)
+  require(laneStride > 0 && cycleOffset >= 0)
   private val base = TangentTwist(n, inverse)
 
   override def eval(inputs: Seq[Complex[Double]], set: Int): Seq[Complex[Double]] =
     val lanes = 1 << laneLog
-    val cycles = lanes
+    val cycles = 1 << effectiveCycleLog
     Vector.tabulate(N) { index =>
       val cycle = index / lanes
       val lane = index % lanes
-      inputs(index) * base.coef(lane * cycles + cycle)
+      inputs(index) * base.coef(lane * laneStride * cycles + cycleOffset + cycle)
     }
 
   override def stream(k: Int, control: RAMControl)(using
       HW[Complex[Double]]
   ): AcyclicStreamingModule[Complex[Double]] =
     require(k == laneLog, s"switch-aware tangent twist requires k=$laneLog, got $k")
-    new AcyclicStreamingModule(n - k, k):
+    new AcyclicStreamingModule(effectiveCycleLog, k):
       override def implement(inputs: Seq[Sig[Complex[Double]]]): Seq[Sig[Complex[Double]]] =
         (0 until K).map { lane =>
-          val twiddles = Vector.tabulate(T)(cycle => base.coef(lane * T + cycle))
+          val twiddles = Vector.tabulate(T)(cycle => base.coef(lane * laneStride * T + cycleOffset + cycle))
           val twiddleHW = hw match
             case ComplexHW(FixedPoint(magnitude, fractional)) => ComplexHW(FixedPoint(2, magnitude + fractional - 6))
             case _ => hw
@@ -120,7 +129,7 @@ case class TangentTwistAfterSwitch(override val n: Int, laneLog: Int, inverse: B
         }
 
       override def spl: SPL[Complex[Double]] =
-        TangentTwistAfterSwitch(TangentTwistAfterSwitch.this.n, laneLog, inverse)
+        TangentTwistAfterSwitch(TangentTwistAfterSwitch.this.n, laneLog, inverse, laneStride, cycleOffset, effectiveCycleLog)
 
 /** Forward tangent FFT: twist first, then apply the cyclic DFT. */
 case class TangentCTDFT(

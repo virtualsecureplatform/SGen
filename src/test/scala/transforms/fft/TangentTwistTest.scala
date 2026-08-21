@@ -4,6 +4,7 @@ import maths.fields.Complex
 import maths.fields.Complex.*
 import backends.Verilog.*
 import backends.FptSwitchTangentVerilog
+import backends.FptParallelSwitchTangentVerilog
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -56,3 +57,9 @@ class TangentTwistTest extends AnyFunSuite:
     assert(rtl.contains("Input width: 8 lanes; twist width: 4 lanes"))
     assert(rtl.contains("module mainRectForward"))
     assert(rtl.contains("module mainRectReverse"))
+
+  test("rate-preserving tangent wrapper replicates square switch/twist blocks"):
+    val rtl = FptParallelSwitchTangentVerilog.emit(5, 1, 3, ComplexHW(FixedPoint(8, 12)), Complex(1.0))
+    assert(rtl.contains("2 parallel 4x4 switch/twist blocks"))
+    assert(rtl.contains("module mainTwist0"))
+    assert(rtl.contains("module mainTwist1"))

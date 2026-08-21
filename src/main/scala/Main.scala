@@ -25,6 +25,7 @@ import backends.DOT.*
 import backends.Verilog.*
 import backends.RectangularSwitchTransposeVerilog
 import backends.FptSwitchTangentVerilog
+import backends.FptParallelSwitchTangentVerilog
 import buildinfo.BuildInfo
 import ir.rtl.hardwaretype.*
 import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
@@ -179,6 +180,11 @@ object Main:
         case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT DFT requires a complex of fractional hardware datatype.")
       case "fptdftswitch" => hw match
+        case hw: ComplexHW[Double@unchecked] if ratePreserving && k >= n-k =>
+          require(!graph && !rtlgraph && !zip && !testbench, "rate-preserving switch-backed FPT DFT currently emits Verilog only")
+          val file=filename("design.v");val pw=new PrintWriter(file)
+          pw.println(FptParallelSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get));pw.close()
+          println(s"Written rate-preserving switch-backed FPT DFT in $file.")
         case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentCTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
         case hw: ComplexHW[Double@unchecked] =>
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT DFT currently emits Verilog only")
@@ -196,6 +202,8 @@ object Main:
         case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
       case "fptidftswitch" => hw match
+        case _: ComplexHW[Double@unchecked] if ratePreserving =>
+          throw new IllegalArgumentException("rate-preserving fptidftswitch is not implemented yet; use fptdftswitch or the ready/fixed-rate inverse wrapper")
         case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentICTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
         case hw: ComplexHW[Double@unchecked] =>
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT iDFT currently emits Verilog only")
