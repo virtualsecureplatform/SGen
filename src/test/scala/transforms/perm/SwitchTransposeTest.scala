@@ -32,3 +32,9 @@ class SwitchTransposeTest extends AnyFunSuiteLike:
     val rtl=RectangularSwitchTransposeVerilog.emit(cycleLog=2,laneLog=3,dataWidth=16,fixedRate=true)
     assert(!rtl.contains("output ready"))
     assert(rtl.contains("FRAME_INTERVAL=8,MIN_FRAME_GAP=4"))
+
+  test("rate-preserving rectangular transpose retains the input width"):
+    val rtl=RectangularSwitchTransposeVerilog.emit(cycleLog=2,laneLog=3,dataWidth=16,ratePreserving=true)
+    assert(rtl.contains("output reg [15:0] o7"))
+    assert(rtl.contains("FRAME_INTERVAL=4,MIN_FRAME_GAP=0"))
+    assert(rtl.contains("packed/split"))

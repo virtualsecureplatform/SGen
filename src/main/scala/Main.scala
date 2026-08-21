@@ -54,6 +54,7 @@ object Main:
     var logo = true
     var scalingFactor = "1"
     var fixedRate = false
+    var ratePreserving = false
 
     var _n: Option[Int] = None
     def n: Int = _n match
@@ -136,6 +137,7 @@ object Main:
       case "-o" => _filename = argsQ.removeHeadOption()
       case "-sf" => scalingFactor = argsQ.dequeue()
       case "-fixed-rate" => fixedRate = true
+      case "-rate-preserving" => ratePreserving = true
       case "-testbench" => testbench = true
       case "-dualramcontrol" => dualRAMControl = true
       case "-singleportedram" => singlePortedRAM = true
@@ -165,7 +167,7 @@ object Main:
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switchtranspose currently emits Verilog only")
           val file=filename("design.v")
           val pw=new PrintWriter(file)
-          pw.println(RectangularSwitchTransposeVerilog.emit(n-k,k,hw.size,fixedRate=fixedRate))
+          pw.println(RectangularSwitchTransposeVerilog.emit(n-k,k,hw.size,fixedRate=fixedRate,ratePreserving=ratePreserving))
           pw.close()
           println(s"Written rectangular switch transpose in $file.")
       case "wht" => finish(wht.CTWHT(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)

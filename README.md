@@ -125,6 +125,10 @@ Pass `-fixed-rate` when the source follows this static contract and no ready
 port is desired. The generated adapter declares `FRAME_INTERVAL` and
 `MIN_FRAME_GAP`; for a 16-cycle × 32-lane input, the interval is 32 cycles.
 
+Pass `-rate-preserving` to retain the original external width and one-frame-per
+input-frame cadence. The adapter packs or splits the flattened transposed rows
+internally, so two buffers sustain consecutive frames without a rate gap.
+
 The FPT tangent FFT has matching square switch-backed commands:
 
 ```bash
