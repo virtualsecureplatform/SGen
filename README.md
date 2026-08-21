@@ -121,6 +121,10 @@ bandwidth. A transpose from a wider input vector to a narrower output vector
 must eventually deassert `ready`: that is a fundamental rate conversion, not a
 buffering limitation.
 
+Pass `-fixed-rate` when the source follows this static contract and no ready
+port is desired. The generated adapter declares `FRAME_INTERVAL` and
+`MIN_FRAME_GAP`; for a 16-cycle × 32-lane input, the interval is 32 cycles.
+
 The FPT tangent FFT has matching square switch-backed commands:
 
 ```bash
@@ -135,6 +139,9 @@ non-square stream, SGen automatically places rectangular adapters around only
 the twist while the FFT core retains its original width. For example, both
 `-n 9 -k 5` and `-n 9 -k 6` are supported; they use internal 32→16 and 64→8
 width changes respectively.
+
+Add `-fixed-rate` to the rectangular FPT forms when upstream uses that static
+frame interval and a top-level `ready` port is not wanted.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 

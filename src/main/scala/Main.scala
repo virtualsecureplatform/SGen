@@ -53,6 +53,7 @@ object Main:
     var zip = false
     var logo = true
     var scalingFactor = "1"
+    var fixedRate = false
 
     var _n: Option[Int] = None
     def n: Int = _n match
@@ -134,6 +135,7 @@ object Main:
       case "-hw" => _hw = parseHW(argsQ)
       case "-o" => _filename = argsQ.removeHeadOption()
       case "-sf" => scalingFactor = argsQ.dequeue()
+      case "-fixed-rate" => fixedRate = true
       case "-testbench" => testbench = true
       case "-dualramcontrol" => dualRAMControl = true
       case "-singleportedram" => singlePortedRAM = true
@@ -163,7 +165,7 @@ object Main:
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switchtranspose currently emits Verilog only")
           val file=filename("design.v")
           val pw=new PrintWriter(file)
-          pw.println(RectangularSwitchTransposeVerilog.emit(n-k,k,hw.size))
+          pw.println(RectangularSwitchTransposeVerilog.emit(n-k,k,hw.size,fixedRate=fixedRate))
           pw.close()
           println(s"Written rectangular switch transpose in $file.")
       case "wht" => finish(wht.CTWHT(n, r, hw.num.parseString(scalingFactor).get)(using hw.num), hw.asInstanceOf)
@@ -179,7 +181,7 @@ object Main:
         case hw: ComplexHW[Double@unchecked] =>
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT DFT currently emits Verilog only")
           val file=filename("design.v");val pw=new PrintWriter(file)
-          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=false));pw.close()
+          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=false,fixedRate=fixedRate));pw.close()
           println(s"Written rectangular switch-backed FPT DFT in $file.")
         case _ => throw new IllegalArgumentException("Switch-backed FPT DFT requires a complex of fractional hardware datatype.")
       case "dftcompact" => hw match
@@ -196,7 +198,7 @@ object Main:
         case hw: ComplexHW[Double@unchecked] =>
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT iDFT currently emits Verilog only")
           val file=filename("design.v");val pw=new PrintWriter(file)
-          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=true));pw.close()
+          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=true,fixedRate=fixedRate));pw.close()
           println(s"Written rectangular switch-backed FPT iDFT in $file.")
         case _ => throw new IllegalArgumentException("Switch-backed FPT iDFT requires a complex of fractional hardware datatype.")
       case "idftcompact" => hw match

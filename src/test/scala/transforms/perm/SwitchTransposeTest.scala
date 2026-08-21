@@ -27,3 +27,8 @@ class SwitchTransposeTest extends AnyFunSuiteLike:
     assert(rtl.contains("output reg [15:0] o3"))
     assert(rtl.contains("output ready"))
     assert(rtl.contains("storage_0") && rtl.contains("storage_1"))
+
+  test("fixed-rate rectangular transpose removes the ready port"):
+    val rtl=RectangularSwitchTransposeVerilog.emit(cycleLog=2,laneLog=3,dataWidth=16,fixedRate=true)
+    assert(!rtl.contains("output ready"))
+    assert(rtl.contains("FRAME_INTERVAL=8,MIN_FRAME_GAP=4"))

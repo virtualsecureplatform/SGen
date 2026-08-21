@@ -21,7 +21,8 @@ object FptSwitchTangentVerilog:
       hw: ComplexHW[Double],
       scalingFactor: Complex[Double],
       inverse: Boolean,
-      top: String = "main"
+      top: String = "main",
+      fixedRate: Boolean = false
   ): String =
     require(n > 1 && laneLog > 0 && laneLog < n)
     require(top.matches("[A-Za-z_][A-Za-z0-9_$]*"))
@@ -34,8 +35,8 @@ object FptSwitchTangentVerilog:
     val postName = s"${top}RectReverse"
     val twistName = s"${top}TangentTwist"
     val fftName = s"${top}${if inverse then "Inverse" else "Forward"}Core"
-    val forwardRect = RectangularSwitchTransposeVerilog.emit(cycleLog, laneLog, width, preName)
-    val reverseRect = RectangularSwitchTransposeVerilog.emit(laneLog, cycleLog, width, postName)
+    val forwardRect = RectangularSwitchTransposeVerilog.emit(cycleLog, laneLog, width, preName, fixedRate)
+    val reverseRect = RectangularSwitchTransposeVerilog.emit(laneLog, cycleLog, width, postName, fixedRate)
     val twistRtl = renameTop(TangentTwist(n, inverse).stream(cycleLog, RAMControl.Single).toVerilog, twistName)
     val fft = if inverse then ICTDFT(n, r, scalingFactor) else CTDFT(n, r, scalingFactor)
     val fftRtl = renameTop(fft.stream(laneLog, RAMControl.Single).toVerilog, fftName)
@@ -46,18 +47,18 @@ object FptSwitchTangentVerilog:
     val preWires = Vector.tabulate(transposedLanes)(lane => s"wire [${width - 1}:0] pre_o$lane;")
     val twistWires = Vector.tabulate(transposedLanes)(lane => s"wire [${width - 1}:0] twist_o$lane;")
     val postWires = Vector.tabulate(inputLanes)(lane => s"wire [${width - 1}:0] post_o$lane;")
-    val preConnections = Vector(".clk(clk)", ".reset(reset)", ".next(next)", ".ready(ready)", ".next_out(pre_next)") ++
+    val preConnections = Vector(".clk(clk)", ".reset(reset)", ".next(next)") ++ (if fixedRate then Vector.empty else Vector(".ready(ready)")) ++ Vector(".next_out(pre_next)") ++
       ports("i", "i", inputLanes) ++ ports("o", "pre_o", transposedLanes)
     val twistConnections = Vector(".clk(clk)", ".reset(reset)", ".next(pre_next)", ".next_out(twist_next)") ++
       ports("i", "pre_o", transposedLanes) ++ ports("o", "twist_o", transposedLanes)
-    val postConnections = Vector(".clk(clk)", ".reset(reset)", ".next(twist_next)", ".ready(post_ready)", ".next_out(post_next)") ++
+    val postConnections = Vector(".clk(clk)", ".reset(reset)", ".next(twist_next)") ++ (if fixedRate then Vector.empty else Vector(".ready(post_ready)")) ++ Vector(".next_out(post_next)") ++
       ports("i", "twist_o", transposedLanes) ++ ports("o", "post_o", inputLanes)
     val fftConnections = Vector(".clk(clk)", ".reset(reset)", ".next(post_next)", ".next_out(next_out)") ++
       ports("i", "post_o", inputLanes) ++ ports("o", "o", inputLanes)
     val inverseConnections = Vector(".clk(clk)", ".reset(reset)", ".next(next)", ".next_out(fft_next)") ++
       ports("i", "i", inputLanes) ++ ports("o", "fft_o", inputLanes)
     val fftWires = Vector.tabulate(inputLanes)(lane => s"wire [${width - 1}:0] fft_o$lane;")
-    val preInverseConnections = Vector(".clk(clk)", ".reset(reset)", ".next(fft_next)", ".ready(ready)", ".next_out(pre_next)") ++
+    val preInverseConnections = Vector(".clk(clk)", ".reset(reset)", ".next(fft_next)") ++ (if fixedRate then Vector.empty else Vector(".ready(ready)")) ++ Vector(".next_out(pre_next)") ++
       ports("i", "fft_o", inputLanes) ++ ports("o", "pre_o", transposedLanes)
     val instances =
       if !inverse then
@@ -82,10 +83,10 @@ object FptSwitchTangentVerilog:
        |$reverseRect
        |$twistRtl
        |$fftRtl
-       |module $top(input clk,input reset,input next,output ready,output next_out,
+       |module $top(input clk,input reset,input next${if fixedRate then "" else ",output ready"},output next_out,
        |${(topInputs ++ topOutputs).map("  " + _).mkString(",\n")}
        |);
-       |  wire pre_next,twist_next,post_next,post_ready;$inverseNext
+       |  wire pre_next,twist_next,post_next${if fixedRate then "" else ",post_ready"};$inverseNext
        |${(preWires ++ twistWires ++ postWires ++ (if inverse then fftWires else Vector.empty)).map("  " + _).mkString("\n")}
        |  ${instances.mkString("\n  ")}
        |endmodule
