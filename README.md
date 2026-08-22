@@ -155,6 +155,10 @@ width. Thus `-n 9 -k 5` uses two 16×16 blocks, while `-n 9 -k 6` uses eight
 it applies the inverse FFT first, then the strided inverse
 tangent twists and reverse switch blocks.
 
+FPT inverse commands (`fptidft` and `fptidftswitch`) default to `-sf 0.5`,
+which applies the required normalization at each radix-2 butterfly level. Use
+an explicit `-sf 1` only when an intentionally unnormalized inverse is needed.
+
 Pass `-natural-rate` to select the width-changing rectangular FPT wrapper
 instead of the default parallel rate-preserving architecture.
 

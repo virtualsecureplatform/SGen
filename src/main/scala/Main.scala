@@ -29,7 +29,7 @@ import backends.FptParallelSwitchTangentVerilog
 import buildinfo.BuildInfo
 import ir.rtl.hardwaretype.*
 import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
-import maths.fields.F2
+import maths.fields.{Complex, F2}
 import maths.linalg.Matrix
 import transforms.Transform
 import transforms.fft.{CTDFT, DFT, ICTDFT, IItPeaseFused, ItPeaseFused, Swap, TangentCTDFT, TangentCTDFTWithSwitch, TangentICTDFT, TangentICTDFTWithSwitch}
@@ -54,6 +54,7 @@ object Main:
     var zip = false
     var logo = true
     var scalingFactor = "1"
+    var scalingFactorSpecified = false
     var fixedRate = false
     var naturalRate = false
 
@@ -90,6 +91,8 @@ object Main:
     def filename_=(value:String) = _filename = Some(value)
 
     def control = if singlePortedRAM then RAMControl.SinglePorted else if dualRAMControl then RAMControl.Dual else RAMControl.Single
+    def fptInverseScale(hw: ComplexHW[Double]): Complex[Double] =
+      hw.num.parseString(if scalingFactorSpecified then scalingFactor else "0.5").get
 
     def parseHW(argsQ:mutable.Queue[String]): Option[HW[?]] = argsQ.dequeue().toLowerCase() match
       case "unsigned" => Numeric[Int].parseString(argsQ.dequeue()).map(Unsigned.apply)
@@ -136,7 +139,7 @@ object Main:
       case "-r" => _r = Numeric[Int].parseString(argsQ.dequeue())
       case "-hw" => _hw = parseHW(argsQ)
       case "-o" => _filename = argsQ.removeHeadOption()
-      case "-sf" => scalingFactor = argsQ.dequeue()
+      case "-sf" => scalingFactor = argsQ.dequeue(); scalingFactorSpecified = true
       case "-fixed-rate" => fixedRate = true
       case "-natural-rate" => naturalRate = true
       case "-testbench" => testbench = true
@@ -199,19 +202,19 @@ object Main:
         case hw: ComplexHW[Double@unchecked] => finish(ICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("iDFT requires a complex of fractional hardware datatype.")
       case "fptidft" => hw match
-        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, fptInverseScale(hw)), hw)
         case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
       case "fptidftswitch" => hw match
         case hw: ComplexHW[Double@unchecked] if !naturalRate && k >= n-k =>
           require(!graph && !rtlgraph && !zip && !testbench, "rate-preserving switch-backed FPT iDFT currently emits Verilog only")
           val file=filename("design.v");val pw=new PrintWriter(file)
-          pw.println(FptParallelSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=true));pw.close()
+          pw.println(FptParallelSwitchTangentVerilog.emit(n,r,k,hw,fptInverseScale(hw),inverse=true,top="main"));pw.close()
           println(s"Written rate-preserving switch-backed FPT iDFT in $file.")
-        case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentICTDFTWithSwitch(n, r, k, hw.num.parseString(scalingFactor).get), hw)
+        case hw: ComplexHW[Double@unchecked] if n == 2 * k => finish(TangentICTDFTWithSwitch(n, r, k, fptInverseScale(hw)), hw)
         case hw: ComplexHW[Double@unchecked] =>
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switch-backed FPT iDFT currently emits Verilog only")
           val file=filename("design.v");val pw=new PrintWriter(file)
-          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,inverse=true,fixedRate=fixedRate));pw.close()
+          pw.println(FptSwitchTangentVerilog.emit(n,r,k,hw,fptInverseScale(hw),inverse=true,top="main",fixedRate=fixedRate));pw.close()
           println(s"Written rectangular switch-backed FPT iDFT in $file.")
         case _ => throw new IllegalArgumentException("Switch-backed FPT iDFT requires a complex of fractional hardware datatype.")
       case "idftcompact" => hw match
