@@ -4,7 +4,6 @@ import backends.Verilog.*
 import ir.rtl.RAMControl
 import ir.rtl.hardwaretype.{ComplexHW, HW}
 import maths.fields.Complex
-import transforms.perm.SwitchTranspose
 
 /** Tagged-data diagnostic for the parallel rate-preserving switch path.
   * It contains only the pre/post square switch blocks; therefore its external
@@ -22,7 +21,7 @@ object FptParallelSwitchTraceVerilog:
     val lanes = 1 << laneLog
     val width = hw.size
     val switchName = s"${top}SquareSwitch"
-    val switchRtl = renameTop(SwitchTranspose[Complex[Double]](cycleLog).stream(cycleLog, RAMControl.Single).toVerilog, switchName)
+    val switchRtl = FptSquareTransposeVerilog.emit(cycleLog, width, switchName)
     val portsIn = Vector.tabulate(lanes)(lane => s"input [${width - 1}:0] i$lane")
     val portsOut = Vector.tabulate(lanes)(lane => s"output [${width - 1}:0] o$lane")
     val wires = (0 until blocks).flatMap { block =>

@@ -149,11 +149,17 @@ width changes respectively.
 Add `-fixed-rate` to the rectangular FPT forms when upstream uses that static
 frame interval and a top-level `ready` port is not wanted. For no-gap forward
 FPT throughput, use the default mode: SGen partitions the tangent stage into
-`2^(2k-n)` parallel square switch/twist blocks and retains the original FFT
+`2^(2k-n)` parallel square transpose/twist blocks and retains the original FFT
 width. Thus `-n 9 -k 5` uses two 16×16 blocks, while `-n 9 -k 6` uses eight
 8×8 blocks. The same default block partition is available for `fptidftswitch`:
 it applies the inverse FFT first, then the strided inverse
 tangent twists and reverse switch blocks.
+
+The FPT blocks use an exact two-bank square transpose implementation. This is
+intentional: tagged RTL simulation found that the legacy recursive
+`SwitchTransposeUnit` network does not preserve the final lane of its first
+output row under the FPT stream contract. The recursive primitive remains
+available for characterization while its raw valid/data scheduling is repaired.
 
 FPT inverse commands (`fptidft` and `fptidftswitch`) default to `-sf 0.5`,
 which applies the required normalization at each radix-2 butterfly level. Use

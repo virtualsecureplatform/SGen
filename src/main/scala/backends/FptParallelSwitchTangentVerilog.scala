@@ -5,7 +5,6 @@ import ir.rtl.RAMControl
 import ir.rtl.hardwaretype.{ComplexHW, HW}
 import maths.fields.Complex
 import transforms.fft.{CTDFT, FptInverseDft, TangentTwistAfterSwitch}
-import transforms.perm.SwitchTranspose
 
 /** Rate-preserving FPT tangent FFT for laneLog >= cycleLog.
   * Splits the K-wide input into K/C independent CxC switch-transpose blocks.
@@ -26,7 +25,7 @@ object FptParallelSwitchTangentVerilog:
     val inputLanes = 1 << laneLog
     val width = hw.size
     val switchName = s"${top}SquareSwitch"
-    val switchRtl = renameTop(SwitchTranspose[Complex[Double]](blockLog).stream(blockLog, RAMControl.Single).toVerilog, switchName)
+    val switchRtl = FptSquareTransposeVerilog.emit(blockLog, width, switchName)
     val twistRtls = (0 until blocks).map { block =>
       val twist = TangentTwistAfterSwitch(n, blockLog, inverse = inverse, laneStride = blocks, cycleOffset = block * blockWidth, cycleLog = blockLog)
       renameTop(twist.stream(blockLog, RAMControl.Single).toVerilog, s"${top}Twist$block")
