@@ -81,6 +81,16 @@ class TangentTwistTest extends AnyFunSuite:
     val rtl = module.toVerilog
     assert(rtl.contains("SGenSwitchTransposeNetwork_3"))
 
+  test("raw switch and tangent timing contracts require explicit data alignment"):
+    given ir.rtl.hardwaretype.HW[Complex[Double]] = ComplexHW(FixedPoint(8, 12))
+    val pre = transforms.perm.SwitchTranspose[Complex[Double]](2).stream(2, RAMControl.Single)
+    val twist = TangentTwistAfterSwitch(5, 2, inverse = false, laneStride = 2, cycleLog = 2).stream(2, RAMControl.Single)
+    val fft = TangentCTDFT(5, 1, Complex(1.0)).stream(3, RAMControl.Single)
+    assert(pre.nextAt == 0)
+    assert(twist.nextAt == -2)
+    assert(fft.nextAt == -2)
+    assert(pre.minGap == 0 && twist.minGap == 0 && fft.minGap == 0)
+
   test("rectangular switch-backed tangent wrapper adapts the twist width"):
     val rtl = FptSwitchTangentVerilog.emit(5, 1, 3, ComplexHW(FixedPoint(8, 12)), Complex(1.0), inverse = false)
     assert(rtl.contains("Input width: 8 lanes; twist width: 4 lanes"))
