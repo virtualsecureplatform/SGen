@@ -125,9 +125,11 @@ Pass `-fixed-rate` when the source follows this static contract and no ready
 port is desired. The generated adapter declares `FRAME_INTERVAL` and
 `MIN_FRAME_GAP`; for a 16-cycle × 32-lane input, the interval is 32 cycles.
 
-Pass `-rate-preserving` to retain the original external width and one-frame-per
-input-frame cadence. The adapter packs or splits the flattened transposed rows
-internally, so two buffers sustain consecutive frames without a rate gap.
+Rectangular `switchtranspose` retains the original external width and
+one-frame-per-input-frame cadence by default. The adapter packs or splits the
+flattened transposed rows internally, so two buffers sustain consecutive frames
+without a rate gap. Pass `-natural-rate` to request the older width-changing
+`C`-lane natural transpose stream instead.
 
 The FPT tangent FFT has matching square switch-backed commands:
 
@@ -146,12 +148,15 @@ width changes respectively.
 
 Add `-fixed-rate` to the rectangular FPT forms when upstream uses that static
 frame interval and a top-level `ready` port is not wanted. For no-gap forward
-FPT throughput, use `-rate-preserving`: SGen partitions the tangent stage into
+FPT throughput, use the default mode: SGen partitions the tangent stage into
 `2^(2k-n)` parallel square switch/twist blocks and retains the original FFT
 width. Thus `-n 9 -k 5` uses two 16×16 blocks, while `-n 9 -k 6` uses eight
-8×8 blocks. The same `-rate-preserving` block partition is available for
-`fptidftswitch`: it applies the inverse FFT first, then the strided inverse
+8×8 blocks. The same default block partition is available for `fptidftswitch`:
+it applies the inverse FFT first, then the strided inverse
 tangent twists and reverse switch blocks.
+
+Pass `-natural-rate` to select the width-changing rectangular FPT wrapper
+instead of the default parallel rate-preserving architecture.
 
 This design allows *full‑throughput* pipelines (no idle cycles between datasets). See [this publication](https://fserre.github.io/publications/pdfs/fpga2016.pdf) for details.
 
