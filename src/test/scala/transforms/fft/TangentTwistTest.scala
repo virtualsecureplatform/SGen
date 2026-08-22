@@ -36,6 +36,12 @@ class TangentTwistTest extends AnyFunSuite:
       val outputs = inverse.eval(forward.eval(inputs, 0), 0)
       outputs.zip(inputs).foreach(close)
 
+  test("radix-8 tangent FFT round trip at 512 points"):
+    val forward = TangentCTDFT(9, 3, Complex(1.0))
+    val inverse = TangentICTDFT(9, 3, Complex(0.5))
+    val inputs = Seq.tabulate(1 << 9)(i => Complex(Math.sin(0.013 * i), Math.cos(0.017 * i)))
+    inverse.eval(forward.eval(inputs, 0), 0).zip(inputs).foreach(close)
+
   for
     n <- 2 to 8 by 2
     r <- 1 to n if n % r == 0
