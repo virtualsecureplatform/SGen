@@ -4,7 +4,7 @@ import backends.Verilog.*
 import ir.rtl.RAMControl
 import ir.rtl.hardwaretype.{ComplexHW, HW}
 import maths.fields.Complex
-import transforms.fft.{CTDFT, ICTDFT, TangentTwist}
+import transforms.fft.{CTDFT, FptInverseDft, TangentTwist}
 
 /** Composes a width-changing transpose pair around the FPT tangent twist.
   * This keeps the DFT core at its requested width while evaluating the twist
@@ -38,8 +38,8 @@ object FptSwitchTangentVerilog:
     val forwardRect = RectangularSwitchTransposeVerilog.emit(cycleLog, laneLog, width, preName, fixedRate)
     val reverseRect = RectangularSwitchTransposeVerilog.emit(laneLog, cycleLog, width, postName, fixedRate)
     val twistRtl = renameTop(TangentTwist(n, inverse).stream(cycleLog, RAMControl.Single).toVerilog, twistName)
-    val fft = if inverse then ICTDFT(n, r, scalingFactor) else CTDFT(n, r, scalingFactor)
-    val fftRtl = renameTop(fft.stream(laneLog, RAMControl.Single).toVerilog, fftName)
+    val fftRtl = if inverse then renameTop(FptInverseDft.spl(n, r, scalingFactor).stream(laneLog, RAMControl.Single).toVerilog, fftName)
+      else renameTop(CTDFT(n, r, scalingFactor).stream(laneLog, RAMControl.Single).toVerilog, fftName)
     def ports(prefix: String, direction: String, lanes: Int): Vector[String] =
       Vector.tabulate(lanes)(lane => s".$prefix$lane($direction$lane)")
     val topInputs = Vector.tabulate(inputLanes)(lane => s"input [${width - 1}:0] i$lane")

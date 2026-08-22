@@ -158,6 +158,10 @@ tangent twists and reverse switch blocks.
 FPT inverse commands (`fptidft` and `fptidftswitch`) default to `-sf 0.5`,
 which applies the required normalization at each radix-2 butterfly level. Use
 an explicit `-sf 1` only when an intentionally unnormalized inverse is needed.
+For radix-8 (`-r 3`) fixed-point inverse FPT, SGen keeps a one-bit-wide
+add/subtract result before each internal `/2` narrowing. This reproduces three
+normalized radix-2 levels inside the macro-stage and prevents wraparound before
+normalization at restricted fixed-point widths.
 
 Pass `-natural-rate` to select the width-changing rectangular FPT wrapper
 instead of the default parallel rate-preserving architecture.

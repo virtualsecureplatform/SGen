@@ -34,6 +34,13 @@ import ir.rtl.signals.{Const, Minus, Operator, Plus, Sig, Times}
  * @param fractional Number of bits of the fractional part
  */
 case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnitude + fractional):
+  /** Exact fixed-width (lhs +/- rhs) / 2 with a one-bit wide intermediate.
+    * This is the inverse-radix normalization boundary: the add/subtract keeps
+    * its carry/sign bit before the arithmetic shift narrows back to this type.
+    */
+  def normalizedHalf(lhs: Sig[Double], rhs: Sig[Double], subtract: Boolean): Sig[Double] =
+    require(lhs.hw == this && rhs.hw == this)
+    FixNormalizedHalf(lhs, rhs, subtract)
   override def plus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixPlus(lhs, rhs)
 
   override def minus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixMinus(lhs, rhs)
@@ -101,6 +108,17 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
     override def pipeline = 1
 
     override def implement(implicit cp: Sig[?] => Component) = ir.rtl.Minus(cp(this.lhs), cp(this.rhs))
+
+  private case class FixNormalizedHalf(lhs: Sig[Double], rhs: Sig[Double], subtract: Boolean)
+      extends Operator[Double](lhs, rhs)(using FixedPoint.this):
+    override def pipeline = 1
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      def extend(value: Component): Component =
+        val sign = ir.rtl.Tap(value, (value.size - 1) until value.size)
+        ir.rtl.Concat(Seq(sign, value))
+      val wide = if subtract then ir.rtl.Minus(extend(cp(lhs)), extend(cp(rhs))) else ir.rtl.Plus(Seq(extend(cp(lhs)), extend(cp(rhs))))
+      // Bits [W:1] are the arithmetic right shift of the W+1-bit sum.
+      ir.rtl.Tap(wide, 1 until (this.hw.size + 1))
 
   private val dspLowWidth = 18
 

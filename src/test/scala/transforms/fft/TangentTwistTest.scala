@@ -8,6 +8,8 @@ import backends.FptParallelSwitchTangentVerilog
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
 import ir.rtl.RAMControl
 import org.scalatest.funsuite.AnyFunSuite
+import java.nio.file.Files
+import scala.sys.process.*
 
 import scala.math.Numeric.Implicits.infixNumericOps
 
@@ -41,6 +43,26 @@ class TangentTwistTest extends AnyFunSuite:
     val inverse = TangentICTDFT(9, 3, Complex(0.5))
     val inputs = Seq.tabulate(1 << 9)(i => Complex(Math.sin(0.013 * i), Math.cos(0.017 * i)))
     inverse.eval(forward.eval(inputs, 0), 0).zip(inputs).foreach(close)
+
+  test("normalized inverse radix-8 decomposition matches normalized radix-2 mathematics"):
+    val reference = ICTDFT(9, 3, Complex(0.5))
+    val normalized = NormalizedICTDFT(9, 3)
+    val inputs = Seq.tabulate(1 << 9)(i => Complex(Math.sin(0.009 * i), Math.cos(0.015 * i)))
+    reference.eval(inputs, 0).zip(normalized.eval(inputs, 0)).foreach(close)
+
+  test("normalized inverse fixed-point butterfly keeps the carry before scaling"):
+    assume(Process(Seq("sh", "-c", "command -v iverilog >/dev/null && command -v vvp >/dev/null")).! == 0)
+    given ir.rtl.hardwaretype.HW[Complex[Double]] = ComplexHW(FixedPoint(4, 0))
+    val transform = NormalizedInverseDFT2()
+    val module = transform.stream(1, RAMControl.Single)
+    val rtl = module.toVerilog
+    val testbench = module.getTestBench(Seq(Complex(7.0), Complex(7.0)), "wide normalized inverse butterfly")
+    val directory = Files.createTempDirectory("sgen-normalized-butterfly-")
+    val source = directory.resolve("design.v")
+    val executable = directory.resolve("sim.out")
+    Files.writeString(source, rtl + "\n" + testbench)
+    assert(Process(Seq("iverilog", "-g2012", "-s", "test", "-o", executable.toString, source.toString)).! == 0)
+    assert(Process(Seq("vvp", executable.toString)).! == 0)
 
   for
     n <- 2 to 8 by 2

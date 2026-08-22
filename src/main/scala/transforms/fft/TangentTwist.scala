@@ -15,12 +15,15 @@ package transforms.fft
 
 import ir.rtl.hardwaretype.{ComplexHW, FixedPoint, HW}
 import ir.rtl.{AcyclicStreamingModule, Component, RAMControl}
-import ir.rtl.signals.{Operator, ROM, Sig, Timer}
-import ir.spl.{Repeatable, SPL}
+import ir.rtl.signals.{Const, Operator, ROM, Sig, Timer}
+import ir.rtl.signals.{Cpx, Im, Re}
+import ir.spl.{ITensor, Product, Repeatable, SPL}
 import maths.fields.Complex
 import maths.fields.Complex.*
 import transforms.HighLevelTransform
 import transforms.perm.SwitchTranspose
+import transforms.perm.LinearPerm.{Lmat, Qmat, Rmat}
+import transforms.perm.LinearPerm.given
 
 import scala.math.Numeric.Implicits.infixNumericOps
 
@@ -44,6 +47,44 @@ private case class StreamingDelay[T](override val n: Int)
         inputs.map(PipelineRegister(_))
 
       override def spl: SPL[T] = StreamingDelay(StreamingDelay.this.n)
+
+/** One inverse radix-2 level with a wide add/subtract followed by exact /2 narrowing. */
+case class NormalizedInverseDFT2() extends SPL[Complex[Double]](1) with Repeatable[Complex[Double]]:
+  override def eval(inputs: Seq[Complex[Double]], set: Int): Seq[Complex[Double]] =
+    inputs.grouped(2).toSeq.flatMap(pair => Seq((pair.head + pair.last) * 0.5, (pair.head - pair.last) * 0.5))
+
+  override def stream(k: Int, control: RAMControl)(using HW[Complex[Double]]): AcyclicStreamingModule[Complex[Double]] =
+    require(k == 1, s"normalized inverse radix-2 requires k=1, got $k")
+    new AcyclicStreamingModule(0, 1):
+      override def implement(inputs: Seq[Sig[Complex[Double]]]): Seq[Sig[Complex[Double]]] =
+        val left = inputs.head
+        val right = inputs.last
+        hw match
+          case ComplexHW(fixed: FixedPoint) =>
+            Vector(
+              Cpx(fixed.normalizedHalf(Re(left), Re(right), subtract = false), fixed.normalizedHalf(Im(left), Im(right), subtract = false)),
+              Cpx(fixed.normalizedHalf(Re(left), Re(right), subtract = true), fixed.normalizedHalf(Im(left), Im(right), subtract = true))
+            )
+          case _ => Vector((left + right) * Const(Complex(0.5)), (left - right) * Const(Complex(0.5)))
+
+      override def spl: SPL[Complex[Double]] = NormalizedInverseDFT2()
+
+/** CT decomposition whose radix-2 leaves retain the inverse normalization boundary. */
+case class NormalizedInverseCTDFT(override val n: Int, r: Int) extends DFT(n, r):
+  override val spl: SPL[Complex[Double]] =
+    if n == 1 then NormalizedInverseDFT2()
+    else
+      Lmat(r, n) * Product(n / r)(level =>
+        ITensor(n - r, NormalizedInverseCTDFT(r, 1).spl) * DiagE(n, r, level) * Qmat(n, r, level)
+      ) * Rmat(r, n)
+
+case class NormalizedICTDFT(override val n: Int, r: Int) extends DFT(n, r):
+  override val spl: SPL[Complex[Double]] = Swap(n) * NormalizedInverseCTDFT(n, r).spl * Swap(n)
+
+object FptInverseDft:
+  def spl(n: Int, r: Int, scalingFactor: Complex[Double]): SPL[Complex[Double]] =
+    if r == 3 && scalingFactor == Complex(0.5) then NormalizedICTDFT(n, r).spl
+    else ICTDFT(n, r, scalingFactor).spl
 
 /** Pointwise tangent-FFT twist for a folded, real polynomial.
   *
@@ -147,7 +188,7 @@ case class TangentICTDFT(
     scalingFactor: Complex[Double]
 ) extends DFT(n, r):
   override protected val spl: SPL[Complex[Double]] =
-    TangentTwist(n, inverse = true) * ICTDFT(n, r, scalingFactor).spl
+    TangentTwist(n, inverse = true) * FptInverseDft.spl(n, r, scalingFactor)
 
 /** Tangent FFT lowered through two square SwitchTransposeUnit networks.
   * The paired transposes preserve the external stream order while allowing the
@@ -177,4 +218,4 @@ case class TangentICTDFTWithSwitch(
     SwitchTranspose[Complex[Double]](laneLog) *
       TangentTwistAfterSwitch(n, laneLog, inverse = true) *
       SwitchTranspose[Complex[Double]](laneLog) *
-      ICTDFT(n, r, scalingFactor).spl
+      FptInverseDft.spl(n, r, scalingFactor)

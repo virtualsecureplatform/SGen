@@ -4,7 +4,7 @@ import backends.Verilog.*
 import ir.rtl.RAMControl
 import ir.rtl.hardwaretype.{ComplexHW, HW}
 import maths.fields.Complex
-import transforms.fft.{CTDFT, ICTDFT, TangentTwistAfterSwitch}
+import transforms.fft.{CTDFT, FptInverseDft, TangentTwistAfterSwitch}
 import transforms.perm.SwitchTranspose
 
 /** Rate-preserving FPT tangent FFT for laneLog >= cycleLog.
@@ -32,8 +32,8 @@ object FptParallelSwitchTangentVerilog:
       renameTop(twist.stream(blockLog, RAMControl.Single).toVerilog, s"${top}Twist$block")
     }.mkString("\n")
     val fftName = s"${top}${if inverse then "Inverse" else "Forward"}Core"
-    val fftTransform = if inverse then ICTDFT(n, r, scalingFactor) else CTDFT(n, r, scalingFactor)
-    val fftRtl = renameTop(fftTransform.stream(laneLog, RAMControl.Single).toVerilog, fftName)
+    val fftRtl = if inverse then renameTop(FptInverseDft.spl(n, r, scalingFactor).stream(laneLog, RAMControl.Single).toVerilog, fftName)
+      else renameTop(CTDFT(n, r, scalingFactor).stream(laneLog, RAMControl.Single).toVerilog, fftName)
     val inputs = Vector.tabulate(inputLanes)(lane => s"input [${width - 1}:0] i$lane")
     val outputs = Vector.tabulate(inputLanes)(lane => s"output [${width - 1}:0] o$lane")
     val wires = (0 until blocks).flatMap { block =>
