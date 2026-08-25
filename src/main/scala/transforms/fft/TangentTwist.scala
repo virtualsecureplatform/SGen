@@ -179,7 +179,8 @@ case class TangentCTDFT(
     scalingFactor: Complex[Double]
 ) extends DFT(n, r):
   override protected val spl: SPL[Complex[Double]] =
-    CTDFT(n, r, scalingFactor).spl * TangentTwist(n, inverse = false)
+    CTDFT(n, r, scalingFactor).spl * TangentTwist(n, inverse = false) *
+      StreamingDelay[Complex[Double]](n)
 
 /** Inverse tangent FFT: apply the cyclic inverse DFT, then untwist. */
 case class TangentICTDFT(

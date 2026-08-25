@@ -153,9 +153,20 @@ object Verilog {
         case cur@Register(_, cycles) => Seq(
           s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur, 1)} [${cycles - 1}:0];",
           s"wire ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
-        case cur@RAM(data, wr, rd) => Seq(
-          s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur, 1)} [${(1 << wr.size) - 1}:0]; // synthesis attribute ram_style of ${getName(cur, 1)} is block",
-          s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
+        case cur@RAM(data, wr, rd) =>
+          // Small FFT shuffle memories are only a few words deep. Forcing each
+          // one into a RAMB36 wastes a complete block and constrains placement;
+          // use LUTRAM until the address space is large enough to benefit from
+          // a block RAM.
+          val ramStyle = sys.env.getOrElse("SGEN_RAM_STYLE", "block") match
+            case "auto"        => if (wr.size < 6) "distributed" else "block"
+            case "block"       => "block"
+            case "distributed" => "distributed"
+            case style => throw new IllegalArgumentException(
+              s"SGEN_RAM_STYLE must be auto, block, or distributed, not '$style'")
+          Seq(
+            s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur, 1)} [${(1 << wr.size) - 1}:0]; // synthesis attribute ram_style of ${getName(cur, 1)} is $ramStyle",
+            s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
         case cur => Seq(s"wire ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
       }:+"integer i;").map(s => s"  $s\n").mkString("")
 
