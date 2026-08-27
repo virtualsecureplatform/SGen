@@ -44,6 +44,22 @@ class TangentTwistTest extends AnyFunSuite:
     val inputs = Seq.tabulate(1 << 9)(i => Complex(Math.sin(0.013 * i), Math.cos(0.017 * i)))
     inverse.eval(forward.eval(inputs, 0), 0).zip(inputs).foreach(close)
 
+  test("radix-8 stage-2 spill partition preserves the forward transform"):
+    val standard = TangentCTDFT(9, 3, Complex(1.0))
+    val (front, back) =
+      TangentCTDFT.partitionedSplsWithLastStageInputSpill(
+        9,
+        3,
+        Complex(1.0)
+      )
+    val inputs = Seq.tabulate(1 << 9)(i =>
+      Complex(Math.sin(0.013 * i), Math.cos(0.017 * i))
+    )
+    back
+      .eval(front.eval(inputs, 0), 0)
+      .zip(standard.eval(inputs, 0))
+      .foreach(close)
+
   test("normalized inverse radix-8 decomposition matches normalized radix-2 mathematics"):
     val reference = ICTDFT(9, 3, Complex(0.5))
     val normalized = NormalizedICTDFT(9, 3)

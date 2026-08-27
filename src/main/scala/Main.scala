@@ -26,6 +26,7 @@ import backends.Verilog.*
 import backends.RectangularSwitchTransposeVerilog
 import backends.FptSwitchTangentVerilog
 import backends.FptParallelSwitchTangentVerilog
+import backends.FptPartitionedTangentVerilog
 import buildinfo.BuildInfo
 import ir.rtl.hardwaretype.*
 import ir.rtl.{AcyclicStreamingModule, RAMControl, StreamingModule}
@@ -182,6 +183,26 @@ object Main:
       case "fptdft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
         case _ => throw new IllegalArgumentException("FPT DFT requires a complex of fractional hardware datatype.")
+      // Radix-2^k feedforward uses the ordinary Cooley-Tukey arithmetic and
+      // streamed LinearPerm lowering. LinearPerm's temporal stages lower the
+      // FFT shuffles to delay commutators; they are not full lane/time
+      // switch-transpose networks.
+      case "fptradix2kdft" => hw match
+        case hw: ComplexHW[Double@unchecked] =>
+          sys.env.getOrElse("SGEN_FPT_FORWARD_PARTITION", "none") match
+            case "none" => finish(TangentCTDFT(n, r, hw.num.parseString(scalingFactor).get), hw)
+            case partition @ ("stage1" | "stage2" | "stage2spill") =>
+              require(!graph && !rtlgraph && !zip && !testbench, "partitioned FPT DFT currently emits Verilog only")
+              val spill = partition == "stage2spill"
+              val cut = if spill then 2 else partition.stripPrefix("stage").toInt
+              val boundaryRegisters = sys.env.getOrElse("SGEN_FPT_BOUNDARY_REGISTERS", "2").toInt
+              val file=filename("design.v");val pw=new PrintWriter(file)
+              pw.println(FptPartitionedTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,cut,spill,boundaryRegisters));pw.close()
+              val description = if spill then " and final-stage input spill" else ""
+              println(s"Written FPT DFT with a radix-stage-$cut boundary$description in $file.")
+            case partition => throw new IllegalArgumentException(
+              s"SGEN_FPT_FORWARD_PARTITION must be none, stage1, stage2, or stage2spill, not '$partition'")
+        case _ => throw new IllegalArgumentException("FPT radix-2^k DFT requires a complex of fractional hardware datatype.")
       case "fptdftswitch" => hw match
         case hw: ComplexHW[Double@unchecked] if !naturalRate && k >= n-k =>
           require(!graph && !rtlgraph && !zip && !testbench, "rate-preserving switch-backed FPT DFT currently emits Verilog only")
@@ -204,6 +225,9 @@ object Main:
       case "fptidft" => hw match
         case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, fptInverseScale(hw)), hw)
         case _ => throw new IllegalArgumentException("FPT iDFT requires a complex of fractional hardware datatype.")
+      case "fptradix2kidft" => hw match
+        case hw: ComplexHW[Double@unchecked] => finish(TangentICTDFT(n, r, fptInverseScale(hw)), hw)
+        case _ => throw new IllegalArgumentException("FPT radix-2^k iDFT requires a complex of fractional hardware datatype.")
       case "fptidftswitch" => hw match
         case hw: ComplexHW[Double@unchecked] if !naturalRate && k >= n-k =>
           require(!graph && !rtlgraph && !zip && !testbench, "rate-preserving switch-backed FPT iDFT currently emits Verilog only")

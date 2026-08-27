@@ -65,12 +65,25 @@ abstract class DFT(n: Int, r: Int) extends HighLevelTransform[Complex[Double]](n
     val inputs3 = Seq.tabulate(1 << n)(k => if k == 0 then Complex(hw.MID_VALUE) else Complex(0.0)) // Fourth set is a dirac
     inputs0 ++ inputs1 ++ inputs2 ++ inputs3
   
+object CTDFT:
+  /** Radix stages in algebraic (output-to-input) order. */
+  def radixStages(
+      n: Int,
+      r: Int,
+      scalingFactor: Complex[Double]
+  ): Vector[SPL[Complex[Double]]] =
+    require(n > 1 && n % r == 0)
+    Vector.tabulate(n / r)(l =>
+      ITensor(n - r, CTDFT(r, 1, scalingFactor).spl) *
+        DiagE(n, r, l) * Qmat(n, r, l)
+    )
+
 case class CTDFT(override val n: Int, r: Int, scalingFactor: Complex[Double]) extends DFT(n, r):
   override val spl: SPL[Complex[Double]] = 
     if n == 1 then
       DFT2(scalingFactor)
     else
-      Lmat(r, n) * Product(n / r)(l => ITensor(n - r, CTDFT(r, 1, scalingFactor).spl) * DiagE(n, r, l) * Qmat(n, r, l)) * Rmat(r, n)
+      Lmat(r, n) * CTDFT.radixStages(n, r, scalingFactor).reduceLeft(_ * _) * Rmat(r, n)
 
 case class ICTDFT(override val n: Int, r: Int, scalingFactor: Complex[Double]) extends DFT(n, r):
   override val spl: SPL[Complex[Double]] = Swap(n) * CTDFT(n, r, scalingFactor).spl * Swap(n)

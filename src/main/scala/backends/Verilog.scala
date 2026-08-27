@@ -132,6 +132,9 @@ object Verilog {
         case RAM(_, _, _) => 2
         case _ => 1
       }.scanLeft(1)(_ + _)))
+      val ramOrdinals = HashMap.from(mod.components.collect {
+        case ram: RAM => ram
+      }.zipWithIndex)
 
       // Returns a verilog identifier for each of the nodes
       @tailrec
@@ -160,10 +163,11 @@ object Verilog {
           // a block RAM.
           val ramStyle = sys.env.getOrElse("SGEN_RAM_STYLE", "block") match
             case "auto"        => if (wr.size < 6) "distributed" else "block"
+            case "hybrid"      => if (ramOrdinals(cur) % 2 == 0) "distributed" else "block"
             case "block"       => "block"
             case "distributed" => "distributed"
             case style => throw new IllegalArgumentException(
-              s"SGEN_RAM_STYLE must be auto, block, or distributed, not '$style'")
+              s"SGEN_RAM_STYLE must be auto, hybrid, block, or distributed, not '$style'")
           Seq(
             s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur, 1)} [${(1 << wr.size) - 1}:0]; // synthesis attribute ram_style of ${getName(cur, 1)} is $ramStyle",
             s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")

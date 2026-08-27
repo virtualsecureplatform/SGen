@@ -182,6 +182,57 @@ case class TangentCTDFT(
     CTDFT(n, r, scalingFactor).spl * TangentTwist(n, inverse = false) *
       StreamingDelay[Complex[Double]](n)
 
+object TangentCTDFT:
+  /**
+    * Split the forward transform after `inputRadixStages` stages as observed
+    * from the input.  Both returned transforms retain the full external stream
+    * shape, so each half owns its permutation timers and RAM controls.
+    */
+  def partitionedSpls(
+      n: Int,
+      r: Int,
+      scalingFactor: Complex[Double],
+      inputRadixStages: Int
+  ): (SPL[Complex[Double]], SPL[Complex[Double]]) =
+    val inputOrderedStages = CTDFT.radixStages(n, r, scalingFactor).reverse
+    require(
+      inputRadixStages > 0 && inputRadixStages < inputOrderedStages.size,
+      s"partition stage must be in [1,${inputOrderedStages.size - 1}], got $inputRadixStages"
+    )
+    val frontStages = inputOrderedStages.take(inputRadixStages).reverse
+    val backStages = inputOrderedStages.drop(inputRadixStages).reverse
+    val front = frontStages.reduceLeft(_ * _) * Rmat(r, n) *
+      TangentTwist(n, inverse = false) * StreamingDelay[Complex[Double]](n)
+    val back = Lmat(r, n) * backStages.reduceLeft(_ * _)
+    (front, back)
+
+  /** Move the input-side permutation and twiddle of the final radix stage
+    * across a stage-2 physical boundary.
+    *
+    * For the 512-point radix-8 transform, a normal stage-2 cut leaves the
+    * complete final radix stage in the back partition. Splitting that stage
+    * between its input permutation/twiddle and output butterfly moves a
+    * bounded portion of its RAM, DSP, and carry logic into the front SLR
+    * without introducing another wide device crossing.
+    */
+  def partitionedSplsWithLastStageInputSpill(
+      n: Int,
+      r: Int,
+      scalingFactor: Complex[Double]
+  ): (SPL[Complex[Double]], SPL[Complex[Double]]) =
+    val stages = CTDFT.radixStages(n, r, scalingFactor)
+    require(
+      stages.size >= 2,
+      "the final radix stage can only be split in a multi-stage transform"
+    )
+    val earlierOutputStages = stages.drop(1)
+    val front = DiagE(n, r, 0) * Qmat(n, r, 0) *
+      earlierOutputStages.reduceLeft(_ * _) * Rmat(r, n) *
+      TangentTwist(n, inverse = false) * StreamingDelay[Complex[Double]](n)
+    val back = Lmat(r, n) *
+      ITensor(n - r, CTDFT(r, 1, scalingFactor).spl)
+    (front, back)
+
 /** Inverse tangent FFT: apply the cyclic inverse DFT, then untwist. */
 case class TangentICTDFT(
     override val n: Int,
