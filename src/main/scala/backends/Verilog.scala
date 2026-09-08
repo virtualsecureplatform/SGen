@@ -119,6 +119,11 @@ object Verilog {
      * @return a string containing the verilog code of the module
      */
     def toVerilog: String =
+      mod.toVerilogWithMuxControlBudget(sys.env.getOrElse("SGEN_MUX_CONTROL_MAX_BITS", "0").toInt)
+
+    /** Replicate only the final selector stage; zero disables the transformation. */
+    def toVerilogWithMuxControlBudget(maxBits: Int): String =
+      require(maxBits >= 0, "SGEN_MUX_CONTROL_MAX_BITS must be nonnegative")
       val requestedSwitchNetworks = mod.components.collect {
         case cur: SwitchTransposeNetworkComponent => (cur.logSize, cur.dataWidth)
       }
@@ -145,6 +150,59 @@ object Verilog {
         case Const(size, value) => s"$size'd$value"
         case _ => s"s${indexes(comp) + internal}"
 
+
+      @tailrec
+      def selectorRegister(comp: Component): Option[Register] = comp match
+        case Wire(input) => selectorRegister(input)
+        case reg: Register if reg.size == 1 && reg.cycles > 0 => Some(reg)
+        case _ => None
+
+      // Keep the original graph and numbering intact. Identical graph Registers
+      // would be structurally deduplicated, so emit uniquely named final FFs.
+      val copies = scala.collection.mutable.ArrayBuffer.empty[(String, Register, Seq[Mux])]
+      val selectorNames = scala.collection.mutable.Map.empty[Mux, String]
+      val manifest = scala.collection.mutable.ArrayBuffer.empty[String]
+      if maxBits > 0 then
+        manifest += s"// mux_control_budget max_bits=$maxBits"
+        val muxes = mod.components.collect { case m: Mux if m.address.size == 1 => m }.sortBy(indexes(_))
+        val eligible = muxes.flatMap(m => selectorRegister(m.address).map(_ -> m))
+        muxes.filter(m => selectorRegister(m.address).isEmpty).foreach { m =>
+          manifest += s"// mux_control_unhandled mux=${getName(m)} bits=${m.size} reason=unregistered_selector"
+        }
+        eligible.groupBy(_._1).toSeq.sortBy((reg, _) => indexes(reg)).foreach { (reg, entries) =>
+          val consumers = entries.map(_._2).sortBy(indexes(_))
+          // Small selectors do not need extra preservation constraints.
+          if consumers.map(_.size.toLong).sum > maxBits then
+            var group = Vector.empty[Mux]
+            var bits = 0
+            def flush(): Unit =
+              if group.nonEmpty then
+                val name = s"${getName(reg)}_mux_control_${copies.size}"
+                copies += ((name, reg, group))
+                group.foreach(m => selectorNames(m) = name)
+                manifest += s"// mux_control_copy name=$name source=${getName(reg)} cycles=${reg.cycles} bits=$bits muxes=${group.map(getName(_)).mkString(",")}"
+                group = Vector.empty
+                bits = 0
+            consumers.foreach { m =>
+              if m.size > maxBits then
+                manifest += s"// mux_control_unhandled mux=${getName(m)} bits=${m.size} reason=oversized_mux"
+              else
+                if bits + m.size > maxBits then flush()
+                group :+= m
+                bits += m.size
+            }
+            flush()
+        }
+      val copyDeclarations = copies.map { (name, _, _) =>
+        s"  (* KEEP = \"TRUE\", DONT_TOUCH = \"TRUE\", SHREG_EXTRACT = \"NO\" *) reg $name;\n"
+      }.mkString
+      val copySequential = copies.map { (name, reg, _) =>
+        val predecessor = reg.cycles match
+          case 1 => getName(reg.input)
+          case 2 => getName(reg, 1)
+          case n => s"${getName(reg, 1)} [${n - 2}]"
+        s"      $name <= $predecessor;\n"
+      }.mkString
 
       val declarations = (mod.components.flatMap {
         case _: Output | _: Input | _: Const | _: Wire => Seq()
@@ -187,7 +245,7 @@ object Verilog {
         case Concat(inputs) => Some(inputs.map(getName(_)).mkString("{",", ","}"))
         case Tap(input, range) => Some(s"${getName(input)}[${if (range.size > 1) s"${range.last}:" else ""}${range.start}]")
         case Register(input, cycles) if cycles > 2 => Some(s"${getName(cur,1)} [${cycles - 1}]")
-        case Mux(address, inputs) if address.size == 1 => Some(s"${getName(address)} ? ${getName(inputs.last)} : ${getName(inputs.head)}")
+        case m@Mux(address, inputs) if address.size == 1 => Some(s"${selectorNames.getOrElse(m, getName(address))} ? ${getName(inputs.last)} : ${getName(inputs.head)}")
         case _ => None
       ).map((cur, _))).map((cur, rhs) => s"  assign ${getName(cur)} = $rhs;\n").mkString("")
 
@@ -219,10 +277,18 @@ object Verilog {
           val suffix = s"${cur.logSize}_${cur.dataWidth}"
           val packedInputs = cur.data.reverse.map(getName(_)).mkString("{", ", ", "}")
           Seq(s"SGenSwitchTransposeNetwork_$suffix ext_${getName(cur)}(.clk(clk), .reset(${getName(cur.reset)}), .valid_in(${getName(cur.validIn)}), .data_in($packedInputs), .valid_out(), .data_out(${getName(cur)}));")
+        case cur: BankedPermutationTile =>
+          val packedInputs = cur.data.reverse.map(getName(_)).mkString("{", ", ", "}")
+          val moduleName = if cur.commutator then s"SGenCommutatorPermutation_${cur.tile.role}_${cur.tile.ordinal}" else s"${cur.tile.moduleName}${if cur.localAdmission then "_Local" else ""}"
+          Seq(s"$moduleName tile_${cur.tile.role}_${cur.tile.ordinal}(.clk(clk), .reset(${getName(cur.reset)}), .${if cur.localAdmission then "start_early" else "start"}(${getName(cur.start)}), .data_in($packedInputs), .data_out(${getName(cur)}));")
         case _ => Seq()
       }.map(s => s"  $s\n").mkString("")
 
       val result = new StringBuilder
+      mod.components.collect { case c: BankedPermutationTile => c }.sortBy(c => (c.tile.role, c.tile.ordinal)).foreach { c =>
+        result ++= (if c.commutator then CommutatorPermutationVerilog.emit(c.tile, c.dataWidth)
+          else BankedPermutationVerilog.emit(c.tile, c.dataWidth, c.localAdmission))
+      }
       switchNetworks.foreach { case (logSize, dataWidth) =>
         result ++= switchTransposeDefinitions(logSize, dataWidth)
         result ++= "\n"
@@ -232,12 +298,15 @@ object Verilog {
       result ++= mod.outputs.map(s => s"  output ${if (s.size != 1) s"[${s.size - 1}:0] " else ""}${getName(s)}").mkString(",\n")
       result ++= ");\n\n"
       result ++= declarations
+      if maxBits > 0 then result ++= manifest.mkString("", "\n", "\n")
+      result ++= copyDeclarations
       result ++= assignments
       result ++= combinatorial
       if sequential.nonEmpty then
         result ++= "  always @(posedge clk)\n"
         result ++= "    begin\n"
         result ++= sequential
+        result ++= copySequential
         result ++= "    end\n"
       result ++= "endmodule\n"
       result.toString()

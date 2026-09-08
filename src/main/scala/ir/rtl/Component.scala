@@ -126,6 +126,12 @@ case class SwitchTransposeNetworkComponent(data: Seq[Component], validIn: Compon
   require(dataWidth > 0 && data.forall(_.size == dataWidth))
   require(validIn.size == 1 && reset.size == 1)
 
+case class BankedPermutationTile(data: Seq[Component], start: Component, reset: Component,
+    tile: transforms.perm.BankedTile, dataWidth: Int, localAdmission: Boolean = false, commutator: Boolean = false)
+  extends ImmutableComponent(4 * dataWidth, (data ++ Seq(start, reset))*):
+  require(data.size == 4 && data.forall(_.size == dataWidth))
+  require(start.size == 1 && reset.size == 1)
+
 object ROM:
   def unapply(arg:Mux) =
     if arg.inputs.forall(_.isInstanceOf[Const]) then

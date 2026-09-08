@@ -226,10 +226,21 @@ object TangentCTDFT:
       "the final radix stage can only be split in a multi-stage transform"
     )
     val earlierOutputStages = stages.drop(1)
-    val front = DiagE(n, r, 0) * Qmat(n, r, 0) *
-      earlierOutputStages.reduceLeft(_ * _) * Rmat(r, n) *
+    val banked = sys.env.getOrElse("SGEN_FPT_FORWARD_PERMUTATION_ARCH", "legacy") match
+      case "legacy" => false
+      case "banked_tiles" | "banked_local_control" | "commutator_tiles" =>
+        require(n == 9 && r == 3, "banked tiles require the 512-point radix-8 forward partition")
+        true
+      case other => throw new IllegalArgumentException(s"Unknown forward permutation architecture: $other")
+    def permutation(p: maths.linalg.Matrix[maths.fields.F2], role: String): SPL[Complex[Double]] =
+      if banked then transforms.perm.BankedPermutation[Complex[Double]](p, role,
+        sys.env.get("SGEN_FPT_FORWARD_PERMUTATION_ARCH").contains("banked_local_control"),
+        sys.env.get("SGEN_FPT_FORWARD_PERMUTATION_ARCH").contains("commutator_tiles"))
+      else transforms.perm.LinearPerm[Complex[Double]](p)
+    val front = DiagE(n, r, 0) * permutation(Qmat(n, r, 0), "final_input") *
+      earlierOutputStages.reduceLeft(_ * _) * permutation(Rmat(r, n), "input") *
       TangentTwist(n, inverse = false) * StreamingDelay[Complex[Double]](n)
-    val back = Lmat(r, n) *
+    val back = permutation(Lmat(r, n), "output") *
       ITensor(n - r, CTDFT(r, 1, scalingFactor).spl)
     (front, back)
 
