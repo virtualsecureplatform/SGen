@@ -157,7 +157,7 @@ object Main:
       case "stride" => finish(Lmat(r,n), hw)
       case "switchtranspose" =>
         require(k < n, s"Rectangular switch transpose requires 0<k<n; got n=$n, k=$k.")
-        if k == n / 2 then finish(SwitchTranspose(n / 2), hw.asInstanceOf)
+        if 2 * k == n then finish(SwitchTranspose(n / 2), hw.asInstanceOf)
         else
           require(!graph && !rtlgraph && !zip && !testbench, "rectangular switchtranspose currently emits Verilog only")
           val file=filename("design.v")

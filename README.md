@@ -156,3 +156,12 @@ Add `-zip` to obtain a zip archive containing:
 * Optional benchmark.
 
 ---
+
+### Square switch-transpose stream contract
+
+Square switch networks delay validity with the data and accept consecutive
+frames or arbitrary gaps between frames. Each frame must contain uninterrupted
+valid beats. A reset discards in-flight data. NGen/SGen cross-generator regression
+checks are available in the sibling LLM-NTT-Examples repository through
+`scripts/check_permutation_generators.py`. The CLI selects the square network
+only when `2*k == n`; other supported shapes use the rectangular implementation.

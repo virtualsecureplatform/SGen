@@ -60,32 +60,27 @@ object Verilog {
         s"${lower(lane, stage)} <= ${lower(lane, stage - 1)};"
       ))
     }.mkString("\n      ")
-    val control =
-      if logSize == 1 then
-        """valid_out <= valid_in;
-          |      if (valid_in) select <= ~select;
-          |      else select <= 0;""".stripMargin
-      else
-        s"""case (state)
-           |        0: if (valid_in) begin state <= 1; count <= count + 1; end
-           |        1: begin count <= count + 1; if (count == ${half - 1}) begin select <= ~select; count <= 0; valid_out <= 1; state <= 2; end end
-           |        2: begin count <= count + 1; if (count == ${half - 1}) begin select <= ~select; count <= 0; if ((~select) && (~valid_in)) begin valid_out <= 0; select <= 0; state <= 0; end end end
-           |        default: begin state <= 0; valid_out <= 0; select <= 0; count <= 0; end
-           |      endcase""".stripMargin
+    // Delay validity with the data; track each uninterrupted input frame's phase.
+    val validShift = if half == 1 then "valid_delay <= valid_in;"
+      else s"valid_delay <= {valid_delay[${half - 2}:0], valid_in};"
     s"""module SGenSwitchTransposeUnit_$suffix(
        |  input clk, input reset, input valid_in,
        |  input [${lanes * dataWidth - 1}:0] data_in,
-       |  output reg valid_out, output [${lanes * dataWidth - 1}:0] data_out
+       |  output valid_out, output [${lanes * dataWidth - 1}:0] data_out
        |);
-       |  reg select;${if logSize == 1 then "" else " reg [1:0] state; integer count;"}
+       |  reg [${logSize - 1}:0] phase;
+       |  reg [${half - 1}:0] valid_delay;
+       |  wire select = phase[${logSize - 1}];
+       |  assign valid_out = valid_delay[${half - 1}];
        |  $registers
        |  $outputs
        |  always @(posedge clk) begin
-       |    if (reset) begin valid_out <= 0; select <= 0;${if logSize == 1 then "" else " state <= 0; count <= 0;"}
+       |    if (reset) begin phase <= 0; valid_delay <= 0;
        |      $resetPipes
        |    end else begin
        |      $shiftPipes
-       |      $control
+       |      if (valid_in) phase <= phase + 1'b1; else phase <= 0;
+       |      $validShift
        |    end
        |  end
        |endmodule
