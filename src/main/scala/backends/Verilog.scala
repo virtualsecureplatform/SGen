@@ -122,8 +122,11 @@ object Verilog {
       mod.toVerilogWithMuxControlBudget(sys.env.getOrElse("SGEN_MUX_CONTROL_MAX_BITS", "0").toInt)
 
     /** Replicate only the final selector stage; zero disables the transformation. */
-    def toVerilogWithMuxControlBudget(maxBits: Int): String =
+    def toVerilogWithMuxControlBudget(maxBits: Int,
+        islandBits: Int = sys.env.getOrElse("SGEN_MUX_ISLAND_BITS", "0").toInt,
+        twiddleConsumers: Int = 0): String =
       require(maxBits >= 0, "SGEN_MUX_CONTROL_MAX_BITS must be nonnegative")
+      require(Set(0, 120).contains(islandBits), "SGEN_MUX_ISLAND_BITS must be 0 or 120")
       val requestedSwitchNetworks = mod.components.collect {
         case cur: SwitchTransposeNetworkComponent => (cur.logSize, cur.dataWidth)
       }
@@ -150,26 +153,75 @@ object Verilog {
         case Const(size, value) => s"$size'd$value"
         case _ => s"s${indexes(comp) + internal}"
 
+      val (frameDeclarations, frameExpressions) = FrameControlVerilog.emit(
+        mod.components.collect { case c: FrameCounterValue => c }, c => getName(c))
+      val twiddles = TwiddleIslandVerilog.emit(mod.components, c => getName(c), twiddleConsumers)
 
       @tailrec
-      def selectorRegister(comp: Component): Option[Register] = comp match
+      def selectedRegisterBit(comp: Component, bit: Int): Option[(Register, Option[Int])] = comp match
+        case Wire(input) => selectedRegisterBit(input, bit)
+        case Tap(input, range) => selectedRegisterBit(input, range(bit))
+        case reg: Register => Some((reg, Some(bit)))
+        case _ => None
+
+      @tailrec
+      def selectorRegister(comp: Component): Option[(Register, Option[Int])] = comp match
         case Wire(input) => selectorRegister(input)
-        case reg: Register if reg.size == 1 && reg.cycles > 0 => Some(reg)
+        case reg: Register if reg.size == 1 => Some((reg, None))
+        case Tap(input, range) if range.size == 1 => selectedRegisterBit(input, range.start)
         case _ => None
 
       // Keep the original graph and numbering intact. Identical graph Registers
       // would be structurally deduplicated, so emit uniquely named final FFs.
-      val copies = scala.collection.mutable.ArrayBuffer.empty[(String, Register, Seq[Mux])]
+      val copies = scala.collection.mutable.ArrayBuffer.empty[(String, Register, Option[Int], Seq[Mux])]
       val selectorNames = scala.collection.mutable.Map.empty[Mux, String]
       val manifest = scala.collection.mutable.ArrayBuffer.empty[String]
+      // Move existing capture edges into the same hierarchy as their selector.
+      // Do not change the graph, node numbering, or any pipeline latency.
+      val users = mod.components.flatMap(c => c.parents.map(_ -> c)).groupMap(_._1)(_._2)
+      def captures(c: Component): Option[Seq[Register]] =
+        val next = users.getOrElse(c, Seq.empty).distinct
+        val found = next.map {
+          case r: Register => Some(Seq(r))
+          case w: Wire => captures(w)
+          case _ => None
+        }
+        if found.nonEmpty && found.forall(_.nonEmpty) then Some(found.flatten.flatten.distinct)
+        else None
+      val islands = scala.collection.mutable.ArrayBuffer.empty[(String, Register, Option[Int], Seq[(Mux, Register)])]
+      val islandMuxes = scala.collection.mutable.Set.empty[Mux]
+      val captureWires = scala.collection.mutable.Map.empty[Register, String]
+      if islandBits > 0 then
+        val eligible = mod.components.collect { case m: Mux if m.address.size == 1 => m }
+          .flatMap(m => for s <- selectorRegister(m.address); rs <- captures(m)
+            if rs.nonEmpty && rs.map(_.size).sum <= islandBits yield (s, m, rs))
+        eligible.groupBy(_._1).toSeq.sortBy { case ((r, b), _) => (indexes(r), b.getOrElse(-1)) }
+          .foreach { case ((selector, bit), entries) =>
+            var group = Vector.empty[(Mux, Register)]
+            def flush(): Unit =
+              if group.nonEmpty then
+                val name = s"mux_island_${islands.size}"
+                islands += ((name, selector, bit, group))
+                group.foreach { (m, r) =>
+                  islandMuxes += m
+                  captureWires(r) = s"${getName(r)}_island_capture"
+                }
+                manifest += s"// mux_island name=$name source=${getName(selector)} cycles=${selector.cycles} bit=${bit.getOrElse(-1)} bits=${group.map(_._2.size).sum} muxes=${group.map(x => getName(x._1)).mkString(",")} captures=${group.map(x => getName(x._2)).mkString(",")}"
+                group = Vector.empty
+            entries.sortBy(_._3.map(indexes(_)).min).foreach { (_, m, rs) =>
+              if group.map(_._2.size).sum + rs.map(_.size).sum > islandBits then flush()
+              group ++= rs.sortBy(indexes(_)).map(m -> _)
+            }
+            flush()
+          }
       if maxBits > 0 then
         manifest += s"// mux_control_budget max_bits=$maxBits"
-        val muxes = mod.components.collect { case m: Mux if m.address.size == 1 => m }.sortBy(indexes(_))
+        val muxes = mod.components.collect { case m: Mux if m.address.size == 1 && !islandMuxes(m) => m }.sortBy(indexes(_))
         val eligible = muxes.flatMap(m => selectorRegister(m.address).map(_ -> m))
         muxes.filter(m => selectorRegister(m.address).isEmpty).foreach { m =>
           manifest += s"// mux_control_unhandled mux=${getName(m)} bits=${m.size} reason=unregistered_selector"
         }
-        eligible.groupBy(_._1).toSeq.sortBy((reg, _) => indexes(reg)).foreach { (reg, entries) =>
+        eligible.groupBy(_._1).toSeq.sortBy { case ((reg, bit), _) => (indexes(reg), bit.getOrElse(-1)) }.foreach { case ((reg, bit), entries) =>
           val consumers = entries.map(_._2).sortBy(indexes(_))
           // Small selectors do not need extra preservation constraints.
           if consumers.map(_.size.toLong).sum > maxBits then
@@ -178,9 +230,9 @@ object Verilog {
             def flush(): Unit =
               if group.nonEmpty then
                 val name = s"${getName(reg)}_mux_control_${copies.size}"
-                copies += ((name, reg, group))
+                copies += ((name, reg, bit, group))
                 group.foreach(m => selectorNames(m) = name)
-                manifest += s"// mux_control_copy name=$name source=${getName(reg)} cycles=${reg.cycles} bits=$bits muxes=${group.map(getName(_)).mkString(",")}"
+                manifest += s"// mux_control_copy name=$name source=${getName(reg)} cycles=${reg.cycles} bits=$bits muxes=${group.map(getName(_)).mkString(",")} selected_bit=${bit.getOrElse(-1)}"
                 group = Vector.empty
                 bits = 0
             consumers.foreach { m =>
@@ -193,19 +245,29 @@ object Verilog {
             }
             flush()
         }
-      val copyDeclarations = copies.map { (name, _, _) =>
+      val copyDeclarations = copies.map { (name, _, _, _) =>
         s"  (* KEEP = \"TRUE\", DONT_TOUCH = \"TRUE\", SHREG_EXTRACT = \"NO\" *) reg $name;\n"
       }.mkString
-      val copySequential = copies.map { (name, reg, _) =>
+      val copySequential = copies.map { (name, reg, bit, _) =>
         val predecessor = reg.cycles match
           case 1 => getName(reg.input)
           case 2 => getName(reg, 1)
           case n => s"${getName(reg, 1)} [${n - 2}]"
-        s"      $name <= $predecessor;\n"
+        // A one-bit destination truncates the shifted predecessor. This is
+        // also valid Verilog when a depth-one predecessor is a literal.
+        val selected = bit.fold(predecessor)(i => s"($predecessor >> $i)")
+        s"      $name <= $selected;\n"
       }.mkString
 
       val declarations = (mod.components.flatMap {
         case _: Output | _: Input | _: Const | _: Wire => Seq()
+        case cur@Register(_, cycles) if captureWires.contains(cur) =>
+          val width = s"[${cur.size - 1}:0]"
+          val capture = s"wire $width ${captureWires(cur)};"
+          if cycles == 1 then Seq(capture, s"wire $width ${getName(cur)};")
+          else if cycles == 2 then Seq(capture, s"wire $width ${getName(cur, 1)};", s"reg $width ${getName(cur)};")
+          else Seq(capture, s"wire $width ${getName(cur, 1)} [${cycles - 1}:0];",
+            s"reg $width ${getName(cur)}_island_tail [${cycles - 2}:0];", s"wire $width ${getName(cur)};")
         case cur@Mux(address, inputs) if address.size > 1 => Seq(s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
         case cur@Register(_, cycles) if cycles == 1 => Seq(s"reg ${if (cur.size != 1) s"[${cur.size - 1}:0] " else ""}${getName(cur)};")
         case cur@Register(_, cycles) if cycles == 2 => Seq(
@@ -234,9 +296,10 @@ object Verilog {
 
       val assignments = mod.components.flatMap(cur => (cur match
         case Output(input, _) => Some(getName(input))
+        case c: FrameCounterValue => Some(frameExpressions(c))
         case Plus(terms) => Some(terms.map(getName(_)).mkString(" + "))
         case Minus(lhs, rhs) => Some(s"${getName(lhs)} - ${getName(rhs)}")
-        case Times(lhs, rhs) => Some(s"$$signed(${getName(lhs)}) * $$signed(${getName(rhs)})")
+        case m@Times(lhs, rhs) => Some(s"$$signed(${twiddles.operands.getOrElse((m, lhs), getName(lhs))}) * $$signed(${twiddles.operands.getOrElse((m, rhs), getName(rhs))})")
         case And(terms) => Some(terms.map(getName(_)).mkString(" & "))
         case Xor(inputs) => Some(inputs.map(getName(_)).mkString(" ^ "))
         case Or(inputs) => Some(inputs.map(getName(_)).mkString(" | "))
@@ -250,6 +313,10 @@ object Verilog {
       ).map((cur, _))).map((cur, rhs) => s"  assign ${getName(cur)} = $rhs;\n").mkString("")
 
       val sequential = mod.components.flatMap {
+        case cur@Register(_, cycles) if captureWires.contains(cur) =>
+          if cycles == 1 then Seq()
+          else if cycles == 2 then Seq(s"${getName(cur)} <= ${captureWires(cur)};")
+          else (1 until cycles).map(i => s"${getName(cur)}_island_tail[${i-1}] <= ${if i == 1 then captureWires(cur) else s"${getName(cur)}_island_tail[${i-2}]"};")
         case cur@Register(input, cycles) if cycles == 1 => Seq(s"${getName(cur)} <= ${getName(input)};")
         case cur@Register(input, cycles) if cycles == 2 => Seq(
           s"${getName(cur, 1)} <= ${getName(input)};",
@@ -285,6 +352,58 @@ object Verilog {
       }.map(s => s"  $s\n").mkString("")
 
       val result = new StringBuilder
+      // Replicate the existing edge immediately before island admission.
+      // A plain shared SRL tail can otherwise feed hundreds of island inputs.
+      def predecessor(r: Register): String = r.cycles match
+        case 1 => getName(r.input)
+        case 2 => getName(r, 1)
+        case n => s"${getName(r, 1)}[${n-2}]"
+      def selectBit(value: String, bit: Option[Int]): String = bit.fold(value)(i => s"($value >> $i)")
+      def registeredValue(c: Component, bit: Option[Int]): Option[(Register, Option[Int])] = c match
+        case Wire(input) => registeredValue(input, bit)
+        case r: Register => Some((r, bit))
+        case Tap(input, range) if bit.nonEmpty || range.size == 1 =>
+          registeredValue(input, Some(range(bit.getOrElse(0))))
+        case _ => None
+      val regionalInputs = scala.collection.mutable.Map.empty[String, String]
+      val regionalCopies = scala.collection.mutable.ArrayBuffer.empty[(String, String, String)]
+      islands.groupBy { (_, selector, bit, _) => selectBit(predecessor(selector), bit) }
+        .toSeq.sortBy(_._1).foreach { (source, entries) =>
+          val (_, selector, bit, _) = entries.head
+          val previous = if selector.cycles > 1 then
+            Some(selectBit(if selector.cycles == 2 then getName(selector.input)
+              else if selector.cycles == 3 then s"${getName(selector, 1)}[0]"
+              else s"${getName(selector, 1)}[${selector.cycles-3}]", bit))
+          else registeredValue(selector.input, bit).map { (r, b) => selectBit(predecessor(r), b) }
+          previous.foreach { input =>
+            entries.sortBy(_._1.stripPrefix("mux_island_").toInt).grouped(32).foreach { group =>
+              val name = s"mux_predecessor_${regionalCopies.size}"
+              regionalCopies += ((name, source, input))
+              group.foreach(e => regionalInputs(e._1) = s"${name}_q")
+              manifest += s"// mux_predecessor name=$name source=$source islands=${group.map(_._1).mkString(",")}"
+            }
+          }
+        }
+      if regionalCopies.nonEmpty then result ++= """(* KEEP_HIERARCHY="yes", DONT_TOUCH="yes" *)
+module SGenMuxIslandPredecessor(input clk, input d, output wire q);
+  (* KEEP="TRUE", DONT_TOUCH="TRUE", SHREG_EXTRACT="NO" *) reg value;
+  always @(posedge clk) value <= d;
+  assign q = value;
+endmodule
+"""
+      if islands.nonEmpty then result ++= """(* KEEP_HIERARCHY = "yes", DONT_TOUCH = "yes" *)
+module SGenRegisteredMuxIsland #(parameter integer WIDTH=1)(
+  input clk, input select_next, input [WIDTH-1:0] a, b,
+  output reg [WIDTH-1:0] captured);
+  (* KEEP="TRUE", DONT_TOUCH="TRUE", SHREG_EXTRACT="NO" *) reg select_local;
+  always @(posedge clk) begin
+    select_local <= select_next;
+    captured <= select_local ? b : a;
+  end
+endmodule
+"""
+      if sys.env.getOrElse("SGEN_FPT_FRAME_CONTROL", "legacy") == "token" then
+        result ++= "// FRAME_MODE token\n"
       mod.components.collect { case c: BankedPermutationTile => c }.sortBy(c => (c.tile.role, c.tile.ordinal)).foreach { c =>
         result ++= (if c.commutator then CommutatorPermutationVerilog.emit(c.tile, c.dataWidth)
           else BankedPermutationVerilog.emit(c.tile, c.dataWidth, c.localAdmission))
@@ -293,12 +412,36 @@ object Verilog {
         result ++= switchTransposeDefinitions(logSize, dataWidth)
         result ++= "\n"
       }
+      result ++= twiddles.definitions
       result ++= s"module main(input clk,\n"
       result ++= mod.inputs.map(s => s"  input ${if (s.size != 1) s"[${s.size - 1}:0] " else ""}${getName(s)},\n").mkString("")
       result ++= mod.outputs.map(s => s"  output ${if (s.size != 1) s"[${s.size - 1}:0] " else ""}${getName(s)}").mkString(",\n")
       result ++= ");\n\n"
       result ++= declarations
-      if maxBits > 0 then result ++= manifest.mkString("", "\n", "\n")
+      result ++= twiddles.instances
+      result ++= frameDeclarations
+      if maxBits > 0 || islandBits > 0 then result ++= manifest.mkString("", "\n", "\n")
+      regionalCopies.foreach { (name, _, input) =>
+        result ++= s"  wire ${name}_q;\n  SGenMuxIslandPredecessor $name(.clk(clk), .d($input), .q(${name}_q));\n"
+      }
+      islands.foreach { (name, selector, bit, group) =>
+        val predecessor = selector.cycles match
+          case 1 => getName(selector.input)
+          case 2 => getName(selector, 1)
+          case n => s"${getName(selector, 1)}[${n-2}]"
+        val selected = regionalInputs.getOrElse(name, bit.fold(predecessor)(i => s"($predecessor >> $i)"))
+        val a = group.reverse.map(x => getName(x._1.inputs.head)).mkString("{", ",", "}")
+        val b = group.reverse.map(x => getName(x._1.inputs.last)).mkString("{", ",", "}")
+        val output = group.reverse.map(x => captureWires(x._2)).mkString("{", ",", "}")
+        result ++= s"  SGenRegisteredMuxIsland #(.WIDTH(${group.map(_._2.size).sum})) $name (.clk(clk), .select_next($selected), .a($a), .b($b), .captured($output));\n"
+      }
+      captureWires.toSeq.sortBy(x => indexes(x._1)).foreach { (r, capture) =>
+        if r.cycles == 1 then result ++= s"  assign ${getName(r)} = $capture;\n"
+        else if r.cycles == 2 then result ++= s"  assign ${getName(r, 1)} = $capture;\n"
+        else
+          result ++= s"  assign ${getName(r, 1)}[0] = $capture;\n"
+          (1 until r.cycles).foreach(i => result ++= s"  assign ${getName(r, 1)}[$i] = ${getName(r)}_island_tail[${i-1}];\n")
+      }
       result ++= copyDeclarations
       result ++= assignments
       result ++= combinatorial

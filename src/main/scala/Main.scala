@@ -197,7 +197,11 @@ object Main:
               val cut = if spill then 2 else partition.stripPrefix("stage").toInt
               val boundaryRegisters = sys.env.getOrElse("SGEN_FPT_BOUNDARY_REGISTERS", "2").toInt
               val file=filename("design.v");val pw=new PrintWriter(file)
-              pw.println(FptPartitionedTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,cut,spill,boundaryRegisters));pw.close()
+              val preserveBoundary = sys.env.getOrElse("SGEN_FPT_PRESERVE_PARTITION_REGISTERS", "0") match
+                case "0" => false
+                case "1" => true
+                case value => throw new IllegalArgumentException(s"SGEN_FPT_PRESERVE_PARTITION_REGISTERS must be 0 or 1, got $value")
+              pw.println(FptPartitionedTangentVerilog.emit(n,r,k,hw,hw.num.parseString(scalingFactor).get,cut,spill,boundaryRegisters,preservePartitionRegisters=preserveBoundary));pw.close()
               val description = if spill then " and final-stage input spill" else ""
               println(s"Written FPT DFT with a radix-stage-$cut boundary$description in $file.")
             case partition => throw new IllegalArgumentException(

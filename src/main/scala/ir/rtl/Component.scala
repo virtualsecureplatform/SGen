@@ -87,6 +87,14 @@ case class Const(override val size: Int, value: BigInt) extends ImmutableCompone
 case class Register(input: Component, cycles: Int = 1) extends Component(input.size, input):
   require(cycles>0, s"Wrong delay:$cycles")
 
+/** Next-state value for a frame-indexed counter. Only the ingress ordinal
+  * needs global reset; local state is established by its scheduled token.
+  */
+case class FrameCounterValue(previous: Component, trigger: Component, first: Component,
+    limit: Int, resetValue: Int, late: Boolean)
+    extends ImmutableComponent(previous.size, previous, trigger, first):
+  require(limit > 1 && resetValue >= 0 && resetValue < limit)
+
 case class Input(override val size: Int, name: String) extends ImmutableComponent(size):
   override val hashCode = name.hashCode()
 

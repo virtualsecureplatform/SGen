@@ -40,6 +40,17 @@ class CommutatorScheduleTest extends AnyFunSuite:
         phase = (phase+1) % 4
     assert(checked == 16000)
 
+  test("token mode initializes registered phase before payload without a phase override"):
+    val (role, p) = BankedPermutationFixtures.permutations.head
+    val tile = BankedPermutation.tiles(p, role).head
+    val rtl = CommutatorPermutationVerilog.emit(tile, 60, frameControl = true)
+    assert(rtl.contains("phase <= start_early ? 2'd0 : phase + 2'd1;"))
+    assert(rtl.contains("child_select_delay <= {child_select_delay[0], phase[0]};"))
+    assert(!rtl.contains("beat_phase"))
+    assert(rtl.contains("phase_pair1 <= start_early ? 1'b0 : phase[1] ^ phase[0];"))
+    assert(rtl.contains("lower_1_0 <= phase_pair1 ?"))
+    assert(rtl.contains("lower_0_0 <= phase[1] ?"))
+
   test("a four-lane bank plan that is not a pure transpose is rejected"):
     val (role, p) = BankedPermutationFixtures.permutations.head
     val tile = BankedPermutation.tiles(p, role).head

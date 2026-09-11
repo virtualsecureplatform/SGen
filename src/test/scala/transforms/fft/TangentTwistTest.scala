@@ -9,6 +9,7 @@ import ir.rtl.hardwaretype.{ComplexHW, FixedPoint}
 import ir.rtl.RAMControl
 import org.scalatest.funsuite.AnyFunSuite
 import java.nio.file.Files
+import java.nio.charset.StandardCharsets
 import scala.sys.process.*
 
 import scala.math.Numeric.Implicits.infixNumericOps
@@ -76,7 +77,10 @@ class TangentTwistTest extends AnyFunSuite:
     val directory = Files.createTempDirectory("sgen-normalized-butterfly-")
     val source = directory.resolve("design.v")
     val executable = directory.resolve("sim.out")
-    Files.writeString(source, rtl + "\n" + testbench)
+    Files.write(
+      source,
+      (rtl + "\n" + testbench).getBytes(StandardCharsets.UTF_8)
+    )
     assert(Process(Seq("iverilog", "-g2012", "-s", "test", "-o", executable.toString, source.toString)).! == 0)
     assert(Process(Seq("vvp", executable.toString)).! == 0)
 
@@ -104,7 +108,9 @@ class TangentTwistTest extends AnyFunSuite:
     val fft = TangentCTDFT(5, 1, Complex(1.0)).stream(3, RAMControl.Single)
     assert(pre.nextAt == 0)
     assert(twist.nextAt == -2)
-    assert(fft.nextAt == -2)
+    // TangentCTDFT includes the explicit input StreamingDelay added for the
+    // FPT wrapper, so its launch token is one cycle later than the raw twist.
+    assert(fft.nextAt == -1)
     assert(pre.minGap == 0 && twist.minGap == 0 && fft.minGap == 0)
 
   test("rectangular switch-backed tangent wrapper adapts the twist width"):

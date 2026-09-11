@@ -23,7 +23,8 @@ object FptPartitionedTangentVerilog:
       inputRadixStages: Int,
       spillLastStageInput: Boolean = false,
       boundaryRegisters: Int = 2,
-      top: String = "main"
+      top: String = "main",
+      preservePartitionRegisters: Boolean = false
   ): String =
     require(boundaryRegisters == 2, "the physical SLL boundary requires two registers")
     require(top.matches("[A-Za-z_][A-Za-z0-9_$]*"))
@@ -53,7 +54,9 @@ object FptPartitionedTangentVerilog:
     val frontName = s"${top}Front"
     val boundaryName = s"${top}Boundary"
     val backName = s"${top}Back"
-    val frontRtl = renameTop(front.toVerilog, frontName)
+    val frontRtl = renameTop(front.toVerilogWithMuxControlBudget(
+      sys.env.getOrElse("SGEN_MUX_CONTROL_MAX_BITS", "0").toInt,
+      twiddleConsumers = sys.env.getOrElse("SGEN_FPT_FORWARD_TWIDDLE_ISLAND_CONSUMERS", "0").toInt), frontName)
     val backRtl = renameTop(back.toVerilog, backName)
     val latency = front.latency + boundaryRegisters + back.latency
     val interval = Math.max(front.minGap, back.minGap) + (1 << (n - laneLog))
@@ -126,4 +129,7 @@ object FptPartitionedTangentVerilog:
          |  $backName back(.clk(clk),.reset(reset),.next(boundary_next),.next_out(next_out),${ports("i", "boundary_o", lanes)},${ports("o", "o", lanes)});
          |endmodule
          |""".stripMargin
-    s"$frontRtl\n$boundaryRtl\n$backRtl\n$wrapper"
+    val physicalBoundary = if preservePartitionRegisters then
+      boundaryRtl.replace("USER_SLL_REG = \"TRUE\",", "DONT_TOUCH = \"TRUE\", USER_SLL_REG = \"TRUE\",")
+    else boundaryRtl
+    s"$frontRtl\n$physicalBoundary\n$backRtl\n$wrapper"

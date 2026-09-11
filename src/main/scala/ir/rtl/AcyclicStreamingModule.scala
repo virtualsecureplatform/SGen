@@ -99,6 +99,17 @@ abstract class AcyclicStreamingModule[T: HW](t: Int, k: Int) extends StreamingMo
             val times = synch(sig)
             val originalComponent = sig match
               case Input(i) => inputs(i)
+              case c: signals.Counter if sys.env.getOrElse("SGEN_FPT_FRAME_CONTROL", "legacy") == "token" && c.reset == signals.Reset =>
+                require(c.trigger == signals.Next, "frame control requires a dataset-triggered counter")
+                require(c.delayTrigger == 0 || c.delayTrigger == T,
+                  "frame control supports only immediate or end-of-frame counters")
+                val cp = implementComp(times.head + sig.pipeline)
+                val previous = Wire(c.hw.size)
+                val value = FrameCounterValue(previous,
+                  cp(signals.Next, 1 - c.delayTrigger), cp(signals.Next, 1),
+                  c.limit, c.resetValue, c.delayTrigger != 0).register
+                previous.input = value
+                value
               case _ => sig.implement(implementComp(times.head + sig.pipeline))
             immutable.HashMap.from(times.scanLeft(times.head + sig.pipeline -> originalComponent)((prev, time) => time -> prev._2.delay(prev._1 - time)))
           })(requestedTime)

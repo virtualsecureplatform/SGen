@@ -6,6 +6,7 @@ import maths.fields.Complex
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.nio.file.Files
+import java.nio.charset.StandardCharsets
 import scala.sys.process.*
 
 class FptParallelSwitchTraceTest extends AnyFunSuite:
@@ -41,7 +42,7 @@ class FptParallelSwitchTraceTest extends AnyFunSuite:
     val directory = Files.createTempDirectory("sgen-square-switch-")
     val source = directory.resolve("square.v")
     val executable = directory.resolve("square.out")
-    Files.writeString(source, rtl + "\n" + tb)
+    Files.write(source, (rtl + "\n" + tb).getBytes(StandardCharsets.UTF_8))
     assert(Process(Seq("iverilog", "-g2012", "-s", "tb", "-o", executable.toString, source.toString)).! == 0)
     assert(Process(Seq("vvp", executable.toString)).! == 0)
 
@@ -83,7 +84,7 @@ class FptParallelSwitchTraceTest extends AnyFunSuite:
     val directory = Files.createTempDirectory("sgen-switch-trace-")
     val source = directory.resolve("trace.v")
     val executable = directory.resolve("trace.out")
-    Files.writeString(source, rtl + "\n" + tb)
+    Files.write(source, (rtl + "\n" + tb).getBytes(StandardCharsets.UTF_8))
     assert(Process(Seq("iverilog", "-g2012", "-s", "tb", "-o", executable.toString, source.toString)).! == 0)
     assert(Process(Seq("vvp", executable.toString)).! == 0)
 

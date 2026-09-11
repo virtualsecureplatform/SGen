@@ -25,7 +25,7 @@ package ir.rtl.hardwaretype
 
 import Utils.BigIterator
 import ir.rtl.Component
-import ir.rtl.signals.{Const, Minus, Operator, Plus, Sig, Times}
+import ir.rtl.signals.{Const, Minus, Operator, Plus, ROM, Sig, Times}
 
 /**
  * Fixed point arithmetic representation
@@ -41,9 +41,43 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
   def normalizedHalf(lhs: Sig[Double], rhs: Sig[Double], subtract: Boolean): Sig[Double] =
     require(lhs.hw == this && rhs.hw == this)
     FixNormalizedHalf(lhs, rhs, subtract)
-  override def plus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixPlus(lhs, rhs)
+  private lazy val precomputeRomArithmetic = sys.env.getOrElse("SGEN_PRECOMPUTE_ROM_ADD_SUB", "0") match
+    case "0" => false
+    case "1" => true
+    case value => throw IllegalArgumentException(s"SGEN_PRECOMPUTE_ROM_ADD_SUB must be 0 or 1, got '$value'")
 
-  override def minus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] = FixMinus(lhs, rhs)
+  override def plus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] =
+    romArithmetic(lhs, rhs, subtract = false, enabled = precomputeRomArithmetic)
+
+  override def minus(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] =
+    romArithmetic(lhs, rhs, subtract = true, enabled = precomputeRomArithmetic)
+
+  private[hardwaretype] def romArithmetic(
+      lhs: Sig[Double], rhs: Sig[Double], subtract: Boolean, enabled: Boolean
+  ): Sig[Double] =
+    require(lhs.hw == this && rhs.hw == this)
+    (lhs, rhs) match
+      case (ROM(left, address), ROM(right, otherAddress))
+          if enabled && address == otherAddress && left.size == right.size &&
+            (left.size == 2 || left.size == 4) &&
+            BigInt(left.size) == (BigInt(1) << address.hw.size) =>
+        val mask = (BigInt(1) << size) - 1
+        val bits = left.zip(right).map { (a, b) =>
+          val qa = bitsOf(a)
+          val qb = bitsOf(b)
+          (if subtract then qa - qb else qa + qb) & mask
+        }.toVector
+        PrecomputedRomArithmetic(address, bits)
+      case _ => if subtract then FixMinus(lhs, rhs) else FixPlus(lhs, rhs)
+
+  /** Preserve the ROM + arithmetic schedule, but store the quantized result.
+    * Raw bits avoid re-quantization and preserve two's-complement wrapping.
+    */
+  private case class PrecomputedRomArithmetic(address: Sig[Int], bits: Vector[BigInt])
+      extends Operator[Double](address)(using FixedPoint.this):
+    override def pipeline = 2
+    override def implement(implicit cp: Sig[?] => Component): Component =
+      ir.rtl.Mux(cp(address), bits.map(value => ir.rtl.Const(size, value)))
 
   override def times(lhs: Sig[Double], rhs: Sig[Double]): Sig[Double] =
     FixTimes(lhs, rhs)
