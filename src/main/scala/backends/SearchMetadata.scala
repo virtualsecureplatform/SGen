@@ -31,6 +31,7 @@ object SearchMetadata:
       |"radix":2,"scaling":"1","integer_bits":${data.magnitude},"fractional_bits":${data.fractional},
       |"twiddle_integer_bits":2,"twiddle_fractional_bits":${tw.fractional},"complex_packing":"imag-high-real-low",
       |"multiply_rounding":"signed-floor-after-each-real-product","addition":"fixed-width-wrap",
-      |"twiddles":[$entries],"dependencies":[],"rtl_sha256":"$hash"
+      |"twiddles":[$entries],"dependencies":[],"rtl_sha256":"$hash",
+      |"operation_contract":${OperationContract.json(sm)}
       |}""".stripMargin
     Files.write(Paths.get(file.replaceFirst("\\.[^.]+$", "") + ".json"), json.getBytes("UTF-8"))
