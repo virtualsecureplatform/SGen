@@ -12,3 +12,7 @@
 /*.pdf
 /*.svg
 /*.gv
+
+/sgen.bat
+/test/sim/*/
+/test/synth/*/

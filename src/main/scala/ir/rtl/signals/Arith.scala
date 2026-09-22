@@ -97,6 +97,7 @@ object Times:
       case (Zero(), _) => Zero[T]
       case (_, One()) => lhs
       case (One(), _) if lhs.hw == rhs.hw => rhs
+      case _ if lhs.hw.isInstanceOf[ir.rtl.hardwaretype.FixedPoint] && ir.rtl.hardwaretype.FixedPoint.strictRounding.value => lhs.hw.times(lhs, rhs)
       case (_, Mux(address, inputs)) if inputs.filter {
           case Zero() | One() | Opposite(One()) => false
           case _ => true

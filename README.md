@@ -165,3 +165,21 @@ valid beats. A reset discards in-flight data. NGen/SGen cross-generator regressi
 checks are available in the sibling LLM-NTT-Examples repository through
 `scripts/check_permutation_generators.py`. The CLI selects the square network
 only when `2*k == n`; other supported shapes use the rectangular implementation.
+
+
+### Reproducible fixed-point FFT contracts
+
+Build with `sbt regular:test assembly`. The assembly embeds a SHA-256 manifest
+of build inputs under `META-INF/sgen/source-inputs.sha256`.
+
+`-top Name` selects the plain RTL top name. For radix-2 fixed-point FFTs,
+`-metadata -strict-fixedpoint -dualramcontrol` emits an adjacent JSON contract
+with latency, frame spacing, numerical format, exact encoded twiddle values
+and the RTL SHA-256. Supported terminals are `dft`, `idft`, `dftcompact` and
+`idftcompact`, with unit scaling. Metadata requires plain RTL output without
+an embedded testbench. Custom top names also require an external testbench.
+
+Strict fixed-point mode preserves signed-floor truncation after each real
+multiplication; normal generation keeps its existing algebraic optimizations.
+The metadata declares arithmetic behavior. Numerical certification and
+independent RTL verification are responsibilities of the consuming framework.

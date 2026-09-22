@@ -43,7 +43,9 @@ import transforms.perm.LinearPerm.{*, given}
 import scala.language.implicitConversions
 
 object Main:
-  def main(args: Array[String]):Unit =
+  def main(args: Array[String]): Unit = FixedPoint.strictRounding.withValue(false) { run(args) }
+
+  private def run(args: Array[String]):Unit =
     var testbench: Boolean = false
     var graph: Boolean = false
     var rtlgraph: Boolean = false
@@ -52,6 +54,8 @@ object Main:
     var zip = false
     var logo = true
     var scalingFactor = "1"
+    var topName = "main"
+    var metadata = false
 
     var _n: Option[Int] = None
     def n: Int = _n match
@@ -132,6 +136,11 @@ object Main:
       case "-r" => _r = Numeric[Int].parseString(argsQ.dequeue())
       case "-hw" => _hw = parseHW(argsQ)
       case "-o" => _filename = argsQ.removeHeadOption()
+      case "-top" =>
+        topName = argsQ.dequeue()
+        require(topName.matches("[A-Za-z_][A-Za-z0-9_]*"), "invalid top module name")
+      case "-metadata" => metadata = true
+      case "-strict-fixedpoint" => FixedPoint.strictRounding.value = true
       case "-sf" => scalingFactor = argsQ.dequeue()
       case "-testbench" => testbench = true
       case "-dualramcontrol" => dualRAMControl = true
@@ -186,6 +195,8 @@ object Main:
       print(Utils.readFromResources("lic"))
 
     def finish[T](design: Transform[T], hw: HW[T]): Unit =
+      require(!metadata || (!zip && !graph && !rtlgraph && !testbench), "metadata requires plain RTL output without a testbench")
+      require(!testbench || topName == "main", "custom top names require an external testbench")
       if logo then
         print(Utils.readFromResources("logo"))
         print(Utils.readFromResources("lic"))
@@ -216,7 +227,7 @@ object Main:
         pw.write(Utils.readFromResources("version", " * "))
         pw.write(Utils.readFromResources("logo", " * "))
         pw.write(" */\n\n")
-        pw.println(imp.toVerilog)
+        pw.println(imp.toVerilog.replace("module main(", s"module $topName("))
         pw.flush()
         archive.putNextEntry(new ZipEntry("readme.txt"))
         pw.write(Utils.readFromResources("version"))
@@ -267,10 +278,13 @@ object Main:
         pw.write(Utils.readFromResources("logo", " * "))
         imp.description.foreach(l => pw.write(s" * $l\n"))
         pw.write(" */\n\n")
-        pw.println(imp.toVerilog)
+        pw.println(imp.toVerilog.replace("module main(", s"module $topName("))
         if testbench then
           pw.write(imp.getTestBench(design))
         pw.close()
         println(s"Written design in $file.")
+        if metadata then
+          require(!testbench, "metadata generation excludes embedded testbenches")
+          backends.SearchMetadata.write(imp, design.getClass.getSimpleName, r, scalingFactor, control.toString, topName, file)
 
 

@@ -43,7 +43,7 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
   override def bitsOf(const: Double): BigInt = {
     require(const.isFinite)
     if const < 0 then
-      val opposite = ((BigInt(1) << fractional).toDouble * BigDecimal(-const)).toBigInt
+      val opposite = (BigDecimal(BigInt(1) << fractional) * BigDecimal(-const)).toBigInt
       if opposite == 0 then
         opposite
       else
@@ -54,7 +54,7 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
         else
           res
     else
-      val res = ((BigInt(1) << fractional).toDouble * BigDecimal(const)).toBigInt
+      val res = (BigDecimal(BigInt(1) << fractional) * BigDecimal(const)).toBigInt
       if res.bitLength >= size then
         throw IllegalArgumentException(s"Overflow during the conversion of ${const} to a ${this}")
         (BigInt(1) << (size - 1)) - 1
@@ -84,12 +84,15 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
     override def implement(implicit cp: Sig[?] => Component) = ir.rtl.Minus(cp(this.lhs), cp(this.rhs))
 
   private case class FixTimes(override val lhs: Sig[Double], override val rhs: Sig[Double]) extends Times(lhs, rhs):
-    override def pipeline = this.rhs match
+    override def pipeline = if FixedPoint.strictRounding.value then 3 else this.rhs match
       case Const(value) if value > 0 && this.rhs.hw.bitsOf(value).bitCount == 1 => 0
       case _ => 3
 
     override def implement(implicit cp: Sig[?] => Component): Component =
-      this.rhs match
+      if FixedPoint.strictRounding.value then
+        val shift = this.rhs.hw.asInstanceOf[FixedPoint].fractional
+        ir.rtl.Tap(ir.rtl.Times(cp(this.lhs), cp(this.rhs)), shift until (shift + this.lhs.hw.size))
+      else this.rhs match
         case Const(value) if value > 0 && this.rhs.hw.bitsOf(value).bitCount == 1 =>
           val shift = this.rhs.hw.bitsOf(value).lowestSetBit - this.rhs.hw.asInstanceOf[FixedPoint].fractional
           if shift > 0 then
@@ -112,3 +115,7 @@ case class FixedPoint(magnitude: Int, fractional: Int) extends HW[Double](magnit
     case (32, 0) => "int"
     case (64, 0) => "long"
     case _ => s"FixedPoint($magnitude, $fractional)"
+
+object FixedPoint:
+  /** Thread-local opt-in: preserve signed floor at every fixed-point product. */
+  val strictRounding = new scala.util.DynamicVariable[Boolean](false)
